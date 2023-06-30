@@ -2,12 +2,21 @@ import axios from 'axios';
 import { GDStorage } from './types/GDStorage';
 import { Workspace } from './types/Workspace';
 import { Entry } from "./types/Entry";
+import { OTTType } from "./types/OTTType";
 
 class gdBackendClient {
-    private backendUrl: string = '';
+    private backendUrl: string;
+    private accessKeyId: string;
+    private gdAccessKey: string;
 
-    constructor(backendUrl: string) {
+    constructor(backendUrl: string, accessKeyId: string, gdAccessKey: string) {
         this.backendUrl = backendUrl;
+        this.accessKeyId = accessKeyId;
+        this.gdAccessKey = gdAccessKey;
+    }
+
+    async authTest() {
+        return true;
     }
 
     async getDownloadOtt(slug:string): Promise<string> {
@@ -18,7 +27,7 @@ class gdBackendClient {
         return '';
     }
 
-    async getUploadOtt(workspaceName:string, fileDetails:object): Promise<string> {
+    async getUploadOtt(workspaceId:string, fileDetails:object): Promise<string> {
         return '';
     }
 
@@ -29,7 +38,7 @@ class gdBackendClient {
         return true;
     }
 
-    async listWorkspaces(): Promise<Workspace[]> {
+    public async listWorkspaces(): Promise<Workspace[]> {
         return [];
     }
 
