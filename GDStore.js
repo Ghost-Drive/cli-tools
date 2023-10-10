@@ -1,8 +1,8 @@
 // @todo use keypair generated based on seed phrase (same as on frontend) for encrypting / decrypting
 class GDStore  {
 
-    constructor(accessKeyId, secretAccessKey) { // @todo we will obtain these parameters from request and pass here or somehow from ctx
-        this.accessKeyId = accessKeyId;
+    constructor(accessKey, secretAccessKey) { // @todo we will obtain these parameters from request and pass here or somehow from ctx
+        this.accessKey = accessKey;
         this.secretAccessKey = secretAccessKey;
     }
 

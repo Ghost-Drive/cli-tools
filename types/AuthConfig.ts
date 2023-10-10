@@ -1,5 +1,5 @@
 export interface AuthConfig {
-    accessKeyId: string;
-    gdAccessKey: string;
+    accessKey: string;
+    accessSecret: string;
     mnemonic: string;
 }

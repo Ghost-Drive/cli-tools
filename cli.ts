@@ -1,22 +1,32 @@
 #!/usr/bin/env ts-node
-import authMiddleware from './authMiddleware';
-import { gdBackendClient } from './gdBackendClient';
-import { Command } from 'commander';
-import { config } from 'dotenv';
-import { GDStorage } from "./types/GDStorage";
-import { AuthConfig } from "./types/AuthConfig";
-import { GDStore } from "./GDStore";
-const prompt = require('prompt-sync')({sigint: true});
-const ethers = require("ethers")
-import * as path from 'path';
+import {gdBackendClient} from './gdBackendClient';
+import {Command} from 'commander';
+import {config} from 'dotenv';
+import {AuthConfig} from "./types/AuthConfig";
+import * as mime from 'mime';
 
 import * as fs from 'fs';
 import {Wallet} from "ethers";
+import {EntryType} from "./types/Entry";
 import {gdGatewayClient} from "./gdGatewayClient";
+import {KeysAccess} from "./KeysAccess";
+import {getUserRSAKeys} from "gdgateway-client/lib/es5";
 
-// import S3rver from 's3rver/lib/s3rver';
+import path = require("path");
 
-const S3rver = require('s3rver');
+config();
+
+import {
+    LocalFileStream
+} from "gdgateway-client/lib/es5";
+
+const prompt = require('prompt-sync')({sigint: true});
+const ethers = require("ethers");
+const ProgressBar = require('progress');
+
+
+import { pipeline } from 'stream';
+import { promisify } from 'util';
 
 config();
 
@@ -71,8 +81,8 @@ program
             let creds = await loadAuth();
             const gdClient = new gdBackendClient(
                 process.env.BACKEND_ENDPOINT,
-                creds.accessKeyId,
-                creds.gdAccessKey
+                creds.accessKey,
+                creds.accessSecret
             );
 
             let workspaces = await gdClient.listWorkspaces();
@@ -86,16 +96,16 @@ program
 program
     .command('configure')
     .action(async() => {
-        const accessKeyId = prompt('GD Access Key ID: ');
-        const gdAccessKey = prompt('GD Secret Access Key: ');
+        const accessKey = prompt('GD Access Key ID: ');
+        const accessSecret = prompt('GD Secret Access Key: ');
 
         const gdClient = new gdBackendClient(
             process.env.BACKEND_ENDPOINT,
-            accessKeyId,
-            gdAccessKey
+            accessKey,
+            accessSecret
         );
 
-        await gdClient.authTest();
+        // await gdClient.authTest();
 
         let mnemonic = '';
         while(!ethers.Mnemonic.isValidMnemonic(mnemonic)) {
@@ -132,8 +142,8 @@ program
         }
 
         let jsonObject = {
-            accessKeyId: accessKeyId,
-            gdAccessKey: gdAccessKey,
+            accessKey: accessKey,
+            accessSecret: accessSecret,
             mnemonic: mnemonic
         };
         let jsonString = JSON.stringify(jsonObject, null, 2);
@@ -145,48 +155,235 @@ program
         }
     });
 
-// Command to upload a file to a workspace
-
 program
-    .command('cp <filePath> gd://<workspaceId>[/uploadPath]')
-    .description('Upload a file to a workspace')
-    .action(async (filePath: string, workspaceId: string, uploadPath:string|undefined) => {
-        try {
-            let creds = await loadAuth();
-            const gdClient = new gdBackendClient(
-                process.env.BACKEND_ENDPOINT,
-                creds.accessKeyId,
-                creds.gdAccessKey
-            );
+    .command('cp <from> <to>')
+    .description('Download a file from a workspace')
+    .action(async (from: string, to: string) => {
+        const prefix = 'gd://';
 
+        const progressBar = new ProgressBar('[:bar] :percent :etas', { total: 100 });
 
-            let fileDetails: FileDetails;
-            fileDetails.filename = path.basename(filePath);
-            fileDetails.filesize = fs.statSync(filePath).size;
+        const abortController = new AbortController();
 
-            const ott = await gdClient.getUploadOtt(workspaceId, fileDetails);
+        process.on('SIGINT', () => {
+            abortController.abort();
+        });
 
-            const gatewayClient = gdGatewayClient();
-            console.log(response);
-        } catch (error) {
-            console.error(`Error uploading file: ${(error as Error).message}`);
+        if (from.startsWith(prefix) && to.startsWith(prefix)) {
+            throw new Error('Both "from" and "to" cannot start with "gd://"');
+        } else if (!from.startsWith(prefix) && !to.startsWith(prefix)) {
+            throw new Error('Either "from" or "to" should start with "gd://"');
+        } else if (from.startsWith(prefix)) {
+            let { workspaceId, filePath } = parseGDPath(from);
+            return download(workspaceId, filePath, to, progressBar.tick.bind(progressBar), abortController.signal);
+
+        } else if (to.startsWith(prefix)) {
+            let { workspaceId, filePath } = parseGDPath(to);
+            return upload(from, workspaceId, filePath, progressBar.tick.bind(progressBar), abortController.signal);
         }
+
     });
-// Command to download a file from a workspace
+
+
+function parseGDPath(url: string) {
+    const regex = /^gd:\/\/([^\/]+)\/(.*)$/;
+    const match = url.match(regex);
+
+    if (match === null || match.length !== 3) {
+        throw new Error('Invalid URL format');
+    }
+
+    const workspaceId = match[1];
+    const filePath = match[2];
+
+    return { workspaceId, filePath };
+}
+
+async function download(workspaceId: string, filePath: string, localPath:string, progressTick: () => void, signal: AbortSignal) {
+
+    // Check if the path exists
+    const pathName = path.dirname(localPath);
+
+    if (!fs.existsSync(pathName)) {
+        // Path does not exist, create directory
+        fs.mkdirSync(pathName, { recursive: true });
+    }
+
+    let creds = await loadAuth();
+    const gdBackend = new gdBackendClient(
+        process.env.BACKEND_ENDPOINT,
+        creds.accessKey,
+        creds.accessSecret
+    );
+    let entry = await gdBackend.entryDetails(workspaceId, filePath);
+
+    if (fs.existsSync(localPath)) {
+        const stats = fs.lstatSync(localPath);
+
+        if (stats.isFile()) {
+            console.error('The file already exists');
+            process.exit(1);
+        }
+
+        if(stats.isDirectory()) {
+            console.log(localPath);
+            localPath = localPath.replace(/\/+$/, '') + `/${entry.name}`;
+        }
+    }
+
+
+    if(entry.type !== EntryType.FILE) {
+        throw new Error('Only single file can be downloaded in this version');
+    }
+
+    const encryptionDetails = entry.isClientsideEncrypted ?
+        await gdBackend.entryEncryptedDetails(entry) :
+        [];
+
+
+    if (entry.isClientsideEncrypted && encryptionDetails.length === 0) {
+        throw new Error('No encrypted keys for this file stored on server');
+    }
+
+
+    let fileKey;
+
+    if (entry.isClientsideEncrypted) {
+        // decode file key
+        const keys = await KeysAccess.create(creds.mnemonic, 100);
+
+        let pair, detail;
+        for (let i= 0; i < encryptionDetails.length; i++) {
+            detail = encryptionDetails[i];
+            let wallet = keys.getWalletByAddress(detail.userAddress);
+            if (wallet !== undefined) {
+                // get private key
+                pair = await getUserRSAKeys({signer: wallet});
+                break;
+            }
+        }
+
+        if (!pair) {
+            throw new Error('Your seed phrase does not have proper wallet to decode this file');
+        }
+
+
+        const encryptedKey = detail.encryptedKey;
+        console.log({encryptedKey});
+        fileKey = await pair.privateKey.decrypt(encryptedKey);
+    }
+
+
+    //
+    const ott = await gdBackend.getDownloadOtt(workspaceId, entry);
+    const gdGateway = new gdGatewayClient();
+
+    const readable = await gdGateway.downloadFile(entry, ott, async (something) => {
+        console.log(something, 'zl');
+    }, fileKey);
+
+    const writable = fs.createWriteStream(localPath);
+
+    readable.pipe(writable);
+
+    writable.on('finish', () => {
+        console.log('File has been written');
+    });
+
+    writable.on('error', (error) => {
+        console.error('Error writing file:', error);
+    });
+}
+
+async function upload(
+    localPath:string, workspaceId: string, destinationPath: string, progressTick: () => void, signal: AbortSignal
+) {
+
+    let stats;
+    if (fs.existsSync(localPath)) {
+        stats = fs.lstatSync(localPath);
+
+        if(stats.isDirectory()) {
+            console.error('We can\'t upload a directory');
+            process.exit(1);
+        }
+
+        if (!stats.isFile()) {
+            console.error('Upload should be a file');
+            process.exit(1);
+        }
+    } else {
+        console.error('File not found');
+        process.exit(1);
+    }
+
+    let creds = await loadAuth();
+    const gdBackend = new gdBackendClient(
+        process.env.BACKEND_ENDPOINT,
+        creds.accessKey,
+        creds.accessSecret
+    );
+
+    // let entry = await gdBackend.entryDetails(workspaceId, filePath);
+
+    const ott = await gdBackend.getUploadOTT(workspaceId, {
+        size: stats.size,
+        name: path.basename(localPath)
+    });
+
+    // get folder id
+
+    let folderSlug = '';
+    if (destinationPath !== '.' && destinationPath !== '/') {
+        folderSlug = await gdBackend.getFolderSlug(workspaceId, destinationPath);
+    }
+
+    let localFile: LocalFileStream = new LocalFileStream(
+        stats.size,
+        localPath,
+        mime.getType(localPath),
+        folderSlug
+    );
+    const gdGateway = new gdGatewayClient();
+
+    const tickBytesRange = stats.size / 100;
+    const ticksPerTick = 104857600 / stats.size;
+
+    let tickedAtByte = 0;
+
+    let uploadedEntry = await gdGateway.uploadFile(
+        localFile,
+        ott,
+        function (progress) {
+            if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
+                tickedAtByte = progress.progress;
+
+                for (let i = 0; i < ticksPerTick; i++ ) {
+                    progressTick();
+                }
+            }
+        },
+        signal
+    );
+
+    await Promise.all([
+        gdBackend.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey),
+        gdGateway.saveThumb(
+            localFile,
+            await gdBackend.getThumbOtt(
+                workspaceId, {
+                    size: stats.size,
+                    name: path.basename(localPath)
+                }),
+            uploadedEntry.slug
+        )
+    ]);
+
+}
+
+
 
 /*
-// program
-//     .command('cp gd://<workspace>/<filePath> <localPath>')
-//     .description('Download a file from a workspace')
-//     .action(async (workspace: string, filePath: string) => {
-//         try {
-//             const response = await gdBackend.getDownloadOtt(filePath);
-//             // todo: include storage node address to response
-//             // fs.write(fetch())
-//         } catch (error) {
-//             console.error(`Error downloading file: ${(error as Error).message}`);
-//         }
-//     });
 // // Command to list all files in a workspace
 //
 // program

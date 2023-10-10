@@ -24,9 +24,9 @@ const authMiddleware: Middleware = () => {
 
         // Pass the authorization credentials to the store constructor
         // @todo get values from actual header
-        const accessKeyId = "your-access-key-id-from-header";
+        const accessKey = "your-access-key-id-from-header";
         const secretAccessKey = "your-secret-access-key-from-header";
-        ctx.store = new ctx.configuration.store(accessKeyId, secretAccessKey);
+        ctx.store = new ctx.configuration.store(accessKey, secretAccessKey);
 
         // Continue to the next middleware
         await next();

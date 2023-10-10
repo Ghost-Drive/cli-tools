@@ -1,15 +1,18 @@
-export enum OTTType { // @todo make it exact as on backend
+export enum OTTAction {
+    Delete,
     Upload,
     Download,
-    Delete
 }
 
 export interface OTT {
-    createdAt: string;
-    expiredAt: string;
-    action: number;
-    token: string;
     filename: string;
-    filesize: number;
-    actionLabel: string;
+    filesize: string;
+    action: OTTAction;
+    endpoint: Endpoint;
+    token: string;
+}
+
+interface Endpoint {
+    url: string;
+    sameIpUpload: boolean
 }

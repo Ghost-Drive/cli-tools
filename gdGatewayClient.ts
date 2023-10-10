@@ -1,41 +1,151 @@
 import axios from 'axios';
 import { GDStorage } from './types/GDStorage';
 import { Workspace } from './types/Workspace';
-import { Entry } from "./types/Entry";
+import {Entry, EntryType} from "./types/Entry";
+import * as fs from 'fs';
+import {OTT, OTTAction} from "./types/OTT";
+import { downloadFile, uploadFile, LocalFileStream, getThumbnailImage} from 'gdgateway-client/lib/es5';
+import * as Base64 from 'base64-js';
 
+import {getCrypto} from "gdgateway-client/lib/es5/utils/getCrypto";
+
+
+import { createWriteStream } from 'fs';
+import { pipeline } from 'stream';
+import { promisify } from 'util';
+
+
+import {EntryEncryptedDetails} from "./types/EntryEncryptedDetails";
+
+const crypto = getCrypto();
+
+
+const convertArrayBufferToBase64 = (buffer: any) => {
+    const bytes = new Uint8Array(buffer);
+    return  Base64.fromByteArray(bytes);
+};
 class gdGatewayClient {
-    private gdGatewayUrl: '';
 
-    constructor(gdGatewayUrl) {
-        this.gdGatewayUrl = gdGatewayUrl;
+    async uploadFile(localFile: LocalFileStream, ott: OTT, updateProgressCallback: any, signal: AbortSignal): Promise<Entry> {
+        // arrayBuffer
+        const encodeFileData = {
+            callbacks: {
+                onProgress: updateProgressCallback,
+            },
+            handlers: ['onProgress'],
+        };
+
+        const { handlers, callbacks } = encodeFileData; // use 'handlers' as parameter
+
+        const callback = ({ type, params }) => {
+            if (handlers.includes(type)) {
+                callbacks[type]({ ...params });
+            } else {
+                console.error(`Handler "${type}" isn't provided`);
+            }
+        };
+
+        const key = await crypto.subtle.generateKey(
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
+
+        let details = await uploadFile(
+        {
+                file: localFile,
+                oneTimeToken: ott.token,
+                endpoint: ott.endpoint.url,
+                callback,
+                handlers,
+                key
+            },
+            signal
+        );
+
+
+        const bufferKey = await crypto.subtle.exportKey('raw', key);
+        const base64Key = convertArrayBufferToBase64(bufferKey);
+
+        return {
+            name: details.data.data.name,
+            slug: details.data.data.slug,
+            path: details.data.data.path,
+            size: details.data.data.size,
+            workspaceId: details.data.data.workspaceId,
+            isClientsideEncrypted: details.data.data.isClientsideEncrypted,
+            iv: details.data.data.iv,
+            sha3Hash: details.data.data.sha3Hash,
+            type: details.data.data.type,
+            clientsideKey: base64Key
+        }
+
     }
 
-    async uploadFile(file:Blob, ott:string): Promise<string> {
-        return '';
-    }
-
-    async downloadFile(fileSlug:string, ott:string): Promise<string> {
-        return '';
-    }
-
-    async createWorkspace(name:string, storage:GDStorage): Promise<string> {
-        return '11';
-    }
-    async deleteWorkspace(name:string): Promise<boolean> {
+    async saveThumb(
+        file: LocalFileStream,
+        ott: OTT,
+        fileSlug: string
+    )  {
         return true;
+        // const base64Image = await getThumbnailImage({
+        //     path: file.name,
+        //     file: file,
+        //     quality: 10
+        // });
+        //
+        // if (base64Image) {
+        //     const instance = axios.create({
+        //         headers: {
+        //             "x-file-name": file.name,
+        //             "Content-Type": "application/octet-stream",
+        //             "one-time-token": ott.token,
+        //         },
+        //     });
+        //
+        //     await instance.post(`${ott.endpoint}/chunked/thumb/${fileSlug}`, base64Image);
+        // }
+        // return true;
+    };
+
+    async downloadFile(file:Entry, ott:OTT, callback: any,decryptionKey: string | null) {
+        let currentFile = {
+            slug: file.slug,
+            entry_clientside_key: null
+        }
+
+        const controller = new AbortController();
+
+        const encodeFileData = {
+            callbacks: {
+                onProgress: (f) => { callback(f) ; console.log(f)},
+            },
+            handlers: ['onProgress'],
+        };
+
+        const { handlers, callbacks } = encodeFileData; // use 'handlers' as parameter
+
+        const f = ({ type, params }) => { // use 'callback' as parameter
+            if (handlers.includes(type)) {
+                callbacks[type]({ ...params });
+            } else {
+                console.error(`Handler "${type}" isn't provided`);
+            }
+        };
+
+        return downloadFile({
+            file: currentFile,
+            oneTimeToken: ott.token,
+            signal: controller.signal,
+            endpoint: ott.endpoint.url,
+            isEncrypted: file.isClientsideEncrypted,
+            key: decryptionKey,
+            callback:  f,
+            handlers: encodeFileData.handlers
+        });
+
     }
 
-    async listWorkspaces(): Promise<Workspace[]> {
-        return [];
-    }
-
-    async listFiles(workspaceName:string): Promise<Entry[]> {
-        return [];
-    }
-
-    async deleteFile(workspaceName:string, fileSlug:string): Promise<boolean> {
-        return true;
-    }
 }
 
 export { gdGatewayClient };
