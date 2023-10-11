@@ -32,4 +32,8 @@ export class KeysAccess {
     public getWalletByAddress(address: string): ethers.HDNodeWallet | undefined {
         return this.walletByAddress[address.toLowerCase()];
     }
+
+    public getAddresses(): string[] {
+        return Object.keys(this.walletByAddress);
+    }
 }

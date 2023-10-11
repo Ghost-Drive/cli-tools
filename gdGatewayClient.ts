@@ -9,14 +9,6 @@ import * as Base64 from 'base64-js';
 
 import {getCrypto} from "gdgateway-client/lib/es5/utils/getCrypto";
 
-
-import { createWriteStream } from 'fs';
-import { pipeline } from 'stream';
-import { promisify } from 'util';
-
-
-import {EntryEncryptedDetails} from "./types/EntryEncryptedDetails";
-
 const crypto = getCrypto();
 
 
@@ -52,7 +44,7 @@ class gdGatewayClient {
         );
 
         let details = await uploadFile(
-        {
+            {
                 file: localFile,
                 oneTimeToken: ott.token,
                 endpoint: ott.endpoint.url,
@@ -108,39 +100,36 @@ class gdGatewayClient {
         // return true;
     };
 
-    async downloadFile(file:Entry, ott:OTT, callback: any,decryptionKey: string | null) {
+    async downloadFile(file:Entry, ott:OTT, callback: any, signal, decryptionKey: {iv, clientsideKeySha3Hash, key} | null)
+    {
         let currentFile = {
             slug: file.slug,
-            entry_clientside_key: null
+            entry_clientside_key: decryptionKey,
         }
-
-        const controller = new AbortController();
 
         const encodeFileData = {
             callbacks: {
-                onProgress: (f) => { callback(f) ; console.log(f)},
+                onProgress: (f) => { callback(f) ; },
             },
             handlers: ['onProgress'],
         };
 
         const { handlers, callbacks } = encodeFileData; // use 'handlers' as parameter
 
-        const f = ({ type, params }) => { // use 'callback' as parameter
-            if (handlers.includes(type)) {
-                callbacks[type]({ ...params });
-            } else {
-                console.error(`Handler "${type}" isn't provided`);
-            }
-        };
-
         return downloadFile({
             file: currentFile,
             oneTimeToken: ott.token,
-            signal: controller.signal,
+            signal: signal,
             endpoint: ott.endpoint.url,
             isEncrypted: file.isClientsideEncrypted,
-            key: decryptionKey,
-            callback:  f,
+            key: decryptionKey.key,
+            callback:  ({ type, params }) => { // use 'callback' as parameter
+                if (handlers.includes(type)) {
+                    callbacks[type]({ ...params });
+                } else {
+                    console.error(`Handler "${type}" isn't provided`);
+                }
+            },
             handlers: encodeFileData.handlers
         });
 

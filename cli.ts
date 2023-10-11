@@ -226,7 +226,6 @@ async function download(workspaceId: string, filePath: string, localPath:string,
         }
 
         if(stats.isDirectory()) {
-            console.log(localPath);
             localPath = localPath.replace(/\/+$/, '') + `/${entry.name}`;
         }
     }
@@ -246,7 +245,7 @@ async function download(workspaceId: string, filePath: string, localPath:string,
     }
 
 
-    let fileKey;
+    let fileKey: {key,iv,clientsideKeySha3Hash};
 
     if (entry.isClientsideEncrypted) {
         // decode file key
@@ -269,18 +268,31 @@ async function download(workspaceId: string, filePath: string, localPath:string,
 
 
         const encryptedKey = detail.encryptedKey;
-        console.log({encryptedKey});
-        fileKey = await pair.privateKey.decrypt(encryptedKey);
-    }
 
+        fileKey = {
+            key: await pair.privateKey.decrypt(encryptedKey),
+            iv: entry.iv,
+            clientsideKeySha3Hash: entry.sha3Hash
+        };
+    }
 
     //
     const ott = await gdBackend.getDownloadOtt(workspaceId, entry);
     const gdGateway = new gdGatewayClient();
 
-    const readable = await gdGateway.downloadFile(entry, ott, async (something) => {
-        console.log(something, 'zl');
-    }, fileKey);
+    const tickBytesRange = Number(entry.size) / 100;
+    const ticksPerTick = 104857600 / Number(entry.size);
+    let tickedAtByte = 0;
+
+    const readable = await gdGateway.downloadFile(entry, ott, function (progress) {
+        if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
+            tickedAtByte = progress.progress;
+
+            for (let i = 0; i < ticksPerTick; i++ ) {
+                progressTick();
+            }
+        }
+    }, signal, fileKey);
 
     const writable = fs.createWriteStream(localPath);
 
@@ -348,7 +360,6 @@ async function upload(
 
     const tickBytesRange = stats.size / 100;
     const ticksPerTick = 104857600 / stats.size;
-
     let tickedAtByte = 0;
 
     let uploadedEntry = await gdGateway.uploadFile(
@@ -381,7 +392,18 @@ async function upload(
 
 }
 
-
+program
+    .command('wallet')
+    .description('Wallets')
+    .action(async (workspace: string) => {
+        try {
+            let creds = await loadAuth();
+            let keys = await KeysAccess.create(creds.mnemonic, 100);
+            console.log(keys.getAddresses());
+        } catch (error) {
+            console.error(`Error listing files: ${(error as Error).message}`);
+        }
+    });
 
 /*
 // // Command to list all files in a workspace

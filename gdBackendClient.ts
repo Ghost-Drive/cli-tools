@@ -171,6 +171,7 @@ class gdBackendClient {
                 { headers }
             );
 
+
             return {
                 name: response.data.name,
                 slug: response.data.slug,
