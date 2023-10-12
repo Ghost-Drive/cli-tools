@@ -7,9 +7,10 @@ import * as mime from 'mime';
 
 import * as fs from 'fs';
 import {Wallet} from "ethers";
-import {EntryType} from "./types/Entry";
+import {Entry, EntryType} from "./types/Entry";
 import {gdGatewayClient} from "./gdGatewayClient";
 import {KeysAccess} from "./KeysAccess";
+
 import {getUserRSAKeys} from "gdgateway-client/lib/es5";
 
 import path = require("path");
@@ -157,8 +158,9 @@ program
 
 program
     .command('cp <from> <to>')
-    .description('Download a file from a workspace')
+    .description('Download or upload the file')
     .action(async (from: string, to: string) => {
+        console.log({from, to});
         const prefix = 'gd://';
 
         const progressBar = new ProgressBar('[:bar] :percent :etas', { total: 100 });
@@ -405,33 +407,110 @@ program
         }
     });
 
+
+// Command to list all files in a workspace
+
+program
+    .command('ls <folderPath>')
+    .description('List all files in a workspace')
+    .action(async (folderPath: string) => {
+
+        const {workspaceId, filePath} = parseGDPath(folderPath);
+        function displayTable(entries: Entry[]): void {
+            const nameWidth = Math.max(...entries.map(e => e.name.length), "File Name".length);
+            const sizeWidth = Math.max(...entries.map(e => e.size.length), "Size".length);
+
+            // Header
+            console.log(
+                `${"File Name".padEnd(nameWidth)} | ${"Size".padEnd(sizeWidth)}`
+            );
+            console.log("-".repeat(nameWidth + sizeWidth + 3));  // 3 is for " | " divider
+
+            // Rows
+            for (const entry of entries) {
+                console.log(
+                    `${entry.name.padEnd(nameWidth)} | ${entry.size.padEnd(sizeWidth)}`
+                );
+            }
+        }
+
+        try {
+            let creds = await loadAuth();
+
+            const gdBackend = new gdBackendClient(
+                process.env.BACKEND_ENDPOINT,
+                creds.accessKey,
+                creds.accessSecret
+            );
+
+            const generator = await gdBackend.listFiles(workspaceId, filePath);
+            let keepGoing = true;
+
+            while (keepGoing) {
+                const chunk: any[] = [];
+
+                for (let i = 0; i < 10; i++) {
+                    const result = await generator.next();
+                    // console.log(result);
+                    if (result.done) {
+                        keepGoing = false;
+                        break;
+                    }
+                    chunk.push(result.value);
+                }
+
+                if (chunk.length === 0) {
+                    break;
+                }
+
+                console.clear();
+                console.log(folderPath);
+                displayTable(chunk);
+
+                if (chunk.length === 15) {
+                    const answer = prompt('Next page? (y/n) ');
+                    keepGoing = answer.toLowerCase() === 'y';
+                } else {
+                    keepGoing = false;
+                }
+
+            }
+
+        } catch (error) {
+            console.error(`Error listing files: ${(error as Error).message}`);
+        }
+    });
+
+
+
+// Command to delete a file from a workspace
+
+program
+    .command('rm <folderPath>')
+    .description('Delete a file from a workspace')
+    .action(async (folderPath: string) => {
+        try {
+            const {workspaceId, filePath} = parseGDPath(folderPath);
+
+            let creds = await loadAuth();
+
+            const gdBackend = new gdBackendClient(
+                process.env.BACKEND_ENDPOINT,
+                creds.accessKey,
+                creds.accessSecret
+            );
+
+            await gdBackend.rm(workspaceId, filePath);
+
+            console.log(`${filePath} successfully deleted from ${workspaceId}`);
+
+        } catch (error) {
+            console.error(`Error deleting file: ${(error as Error).message}`);
+        }
+    });
+
 /*
-// // Command to list all files in a workspace
-//
-// program
-//     .command('ls gd://<workspace>')
-//     .description('List all files in a workspace')
-//     .action(async (workspace: string) => {
-//         try {
-//             const response = await gdBackend.listFiles(workspace);
-//             console.log(response);
-//         } catch (error) {
-//             console.error(`Error listing files: ${(error as Error).message}`);
-//         }
-//     });
-// // Command to delete a file from a workspace
-//
-// program
-//     .command('rm gd://<workspace>/<file>')
-//     .description('Delete a file from a workspace')
-//     .action(async (workspace: string, file: string) => {
-//         try {
-//             const response = await gdBackend.getDeleteOtt(workspace, file);
-//             console.log(response);
-//         } catch (error) {
-//             console.error(`Error deleting file: ${(error as Error).message}`);
-//         }
-//     });
+
 //
 // program
 //     .command('s3server')

@@ -51,8 +51,8 @@ class gdGatewayClient {
                 callback,
                 handlers,
                 key
-            },
-            signal
+            }
+            ,signal
         );
 
 

@@ -1,6 +1,6 @@
 import {GDStorage} from './types/GDStorage';
 import {Workspace} from './types/Workspace';
-import {Entry} from "./types/Entry";
+import {Entry, EntryType} from "./types/Entry";
 import {EntryEncryptedDetails} from "./types/EntryEncryptedDetails";
 import {OTT, OTTAction} from "./types/OTT";
 import * as forge from "node-forge";
@@ -8,9 +8,7 @@ import * as forge from "node-forge";
 
 // @ts-ignore
 import path from 'path';
-import axios, { AxiosInstance } from 'axios';
-import {Console} from "node:inspector";
-
+import axios, {AxiosInstance} from 'axios';
 
 
 class gdBackendClient {
@@ -27,6 +25,63 @@ class gdBackendClient {
         this.accessKey = accessKey;
         this.accessSecret = accessSecret;
     }
+
+    async *listFiles(workspaceName:string, dir:string): AsyncGenerator<Entry, void, undefined> {
+        await this.auth();
+        await this.setWS(workspaceName);
+
+        let dirSlug;
+        if (dir.length === 0 || dir === '.' || dir === '/') {
+            dirSlug = '';
+        } else {
+
+            const entry = await this.entryDetails(workspaceName, dir);
+
+            if (entry.type !== EntryType.FOLDER) {
+                throw new Error(`${dir} is not a folder`);
+            }
+
+            dirSlug = entry.slug;
+        }
+
+
+        function mapFileRecordToEntry(fileRecord: any): Entry {
+            return {
+                name: fileRecord.name,
+                slug: fileRecord.slug,
+                path: '', // You need to provide a mapping for this or set a default.
+                size: fileRecord.size.toString(),
+                workspaceId: '', // Similarly, you need to provide a mapping for this or set a default.
+                isClientsideEncrypted: fileRecord.isClientsideEncrypted,
+                iv: '', // Not provided in the sample. Adjust as needed.
+                sha3Hash: '', // Not provided in the sample. Adjust as needed.
+                type: fileRecord.type === 1 ? EntryType.FILE : EntryType.FOLDER,
+                clientsideKey: fileRecord.entry_clientside_key || ''
+            };
+        }
+
+        let currentPage = 1;
+        let totalCount = 0;
+
+        do {
+            let url = `${this.backendUrl}/files/${dirSlug}?page=${currentPage}&order_by=createdAt&order=asc`;
+
+            const response =
+                await this.authorizedAxios.get(url);
+
+            // Update total count from the response
+            totalCount = response.data.count;
+
+            // Yield each record one by one after mapping
+            for (const record of response.data.data) {
+                yield mapFileRecordToEntry(record);
+            }
+
+            // Increment the current page for the next iteration
+            currentPage += 1;
+        } while ((currentPage - 1) * 15 < totalCount);  // Assuming each page contains 15 records.
+    }
+
 
     async auth() {
         if (this.token === undefined) {
@@ -241,20 +296,6 @@ class gdBackendClient {
 
     }
 
-    //
-    // async getDeleteOtt(slug:string, filePath: string): Promise<OTT> {
-    //     return {
-    //         filename: response.data.filename,
-    //         filesize: response.data.filesize,
-    //         action: OTTAction.Download,
-    //         endpoint: {
-    //             url: response.data.endpoint,
-    //             sameIpUpload: response.data.sameIpUpload
-    //         },
-    //         token: response.data.user_token
-    //     };
-    // }
-    //
     async getUploadOTT(workspaceId, entry) {
 
         try {
@@ -331,12 +372,26 @@ class gdBackendClient {
         return [];
     }
 
-    async listFiles(workspaceName:string): Promise<Entry[]> {
-        return [];
-    }
+    async rm(workspaceId:string, filePath:string): Promise<boolean> {
 
-    async rm(workspaceName:string, fileSlug:string): Promise<boolean> {
-        return true;
+        try {
+            let entry = await this.entryDetails(workspaceId, filePath);
+
+            const response = await this.authorizedAxios({
+                method: 'DELETE',
+                url: this.backendUrl + '/files/multiply/delete',
+                headers: {
+                    'accept': 'application/json, text/plain, */*',
+                    'content-type': 'application/json',
+                },
+                data: [entry.slug]
+            });
+
+            return response.data.success;
+
+        } catch (error) {
+            this.logAxiosError(error);
+        }
     }
 
     private logAxiosError(error) {
