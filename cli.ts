@@ -55,7 +55,7 @@ program
     .description('Create a new workspace')
     .action(async (name: string, storage: string) => {
         try {
-            console.log('Not implemented');
+            console.error('Not implemented');
         } catch (error: any) {
             console.error(`Error creating workspace: ${(error as Error).message}`);
         }
@@ -67,7 +67,7 @@ program
     .description('Delete a workspace')
     .action(async (name: string) => {
         try {
-            console.log('Not implemented');
+            console.error('Not implemented');
         } catch (error) {
             console.error(`Error deleting workspace: ${(error as Error).message}`);
         }
