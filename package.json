@@ -1,6 +1,6 @@
 {
   "name": "gd-cli",
-  "version": "0.0.1`",
+  "version": "v0.0.1",
   "description": "GD CLI for emulating AWS S3 CLI functionalities",
   "main": "cli.ts",
   "bin": {
