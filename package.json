@@ -1,7 +1,7 @@
 {
-  "name": "gd-cli",
+  "name": "@ghostdrive/gd-cli",
   "version": "v0.0.1",
-  "description": "GD CLI for emulating AWS S3 CLI functionalities",
+  "description": "Ghostdrive CLI tools",
   "main": "cli.ts",
   "bin": {
     "gd": "./cli.ts"
@@ -10,7 +10,7 @@
     "gd": "ts-node cli.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
+  "author": "Ghostdrive",
   "license": "ISC",
   "dependencies": {
     "@types/axios": "^0.14.0",
