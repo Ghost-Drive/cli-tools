@@ -1,8 +1,6 @@
 The "GD CLI Tools" is a software development kit designed to deliver secure and efficient data management.
 It works only with client-side encrypted files, so you need to provide your mnemonic. The mnemonic only used locally and never sent to Ghostdrive servers. 
 
-Diagram:
-![](https://cdn-0.plantuml.com/plantuml/png/dP91IyGm48Nlyok6UkvUlCbILYqKsRs9Fs1CXsvfCrcQ2R8i_dS9eYLfY-0nUT_alGplu9Kc3NO4CkecVFCy0Lp83DGn5asDh_Mnm1iW6cSlJbWKdqylU7VgkxCs4xCascFGCulsXhHtieaLHxvwj2JKiMNH8YDJsD-NDFO3OqjidVp0JsDW-0IOoNSo0qkBj_IwgHjI_g3hjv1btEsgty47tE-3PrzLi8Yu1SPrH6bsMH4ppnLYuPU4oLVmtv4ynn_y-gSWrWJBiefLc0-B5-30qWOxVW40)
 
 
 ## Installation and configuration
@@ -86,4 +84,8 @@ User --> CLI
 User --> "s3-alike daemon"
 @enduml
 ```
+
+
+Diagram:
+![](https://cdn-0.plantuml.com/plantuml/png/dP91IyGm48Nlyok6UkvUlCbILYqKsRs9Fs1CXsvfCrcQ2R8i_dS9eYLfY-0nUT_alGplu9Kc3NO4CkecVFCy0Lp83DGn5asDh_Mnm1iW6cSlJbWKdqylU7VgkxCs4xCascFGCulsXhHtieaLHxvwj2JKiMNH8YDJsD-NDFO3OqjidVp0JsDW-0IOoNSo0qkBj_IwgHjI_g3hjv1btEsgty47tE-3PrzLi8Yu1SPrH6bsMH4ppnLYuPU4oLVmtv4ynn_y-gSWrWJBiefLc0-B5-30qWOxVW40)
 
