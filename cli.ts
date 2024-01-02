@@ -1,10 +1,11 @@
 #!/usr/bin/env ts-node
 import {gdBackendClient} from './gdBackendClient';
+import {oAuthClient} from './oAuthClient';
 import {Command} from 'commander';
 import {config} from 'dotenv';
 import {AuthConfig} from "./types/AuthConfig";
 import * as mime from 'mime';
-
+import * as forge from "node-forge";
 import * as fs from 'fs';
 import {Wallet} from "ethers";
 import {Entry, EntryType} from "./types/Entry";
@@ -51,11 +52,23 @@ const program = new Command();
 
 // Command to create a workspace
 program
-    .command('create-workspace <name> <storage>')
+    .command('create-workspace <name>')
+    .option('--jwt <token>', 'Redefines JWT token')
     .description('Create a new workspace')
-    .action(async (name: string, storage: string) => {
+    .action(async (name: string, options: any) => {
+        if (!options.jwt) {
+            console.error('Error: --jwt option is required as this command is only for oAuth usage');
+            process.exit(1); // Exit with error code
+        }
+
         try {
-            console.error('Not implemented');
+            const gdClient = new gdBackendClient(
+                process.env.BACKEND_ENDPOINT,
+                options.jwt,
+                options.jwt,
+                options.jwt
+            );
+            await gdClient.createWorkspace(name);
         } catch (error: any) {
             console.error(`Error creating workspace: ${(error as Error).message}`);
         }
@@ -64,8 +77,9 @@ program
 // Command to delete a workspace
 program
     .command('delete-workspace <id>')
+    .option('--jwt <token>', 'Redefines JWT token')
     .description('Delete a workspace')
-    .action(async (name: string) => {
+    .action(async (name: string, options: any) => {
         try {
             console.error('Not implemented');
         } catch (error) {
@@ -76,14 +90,17 @@ program
 // Command to list all workspaces
 program
     .command('list-workspaces')
+    .option('--jwt <token>', 'Redefines JWT token')
     .description('List all workspaces')
-    .action(async () => {
+    .action(async (options: any) => {
+
         try {
             let creds = await loadAuth();
             const gdClient = new gdBackendClient(
                 process.env.BACKEND_ENDPOINT,
                 creds.accessKey,
-                creds.accessSecret
+                creds.accessSecret,
+                options.jwt !== undefined ? options.jwt : creds.token
             );
 
             let workspaces = await gdClient.listWorkspaces();
@@ -97,24 +114,14 @@ program
 program
     .command('configure')
     .action(async() => {
-        const accessKey = prompt('GD Access Key ID: ');
-        const accessSecret = prompt('GD Secret Access Key: ');
-
-        const gdClient = new gdBackendClient(
-            process.env.BACKEND_ENDPOINT,
-            accessKey,
-            accessSecret
-        );
-
-        // await gdClient.authTest();
+        const configType = prompt('Configure for (1) Own Account or (2) OAuth Client? Enter 1 or 2: ');
 
         let mnemonic = '';
-        while(!ethers.Mnemonic.isValidMnemonic(mnemonic)) {
+        while (!ethers.Mnemonic.isValidMnemonic(mnemonic)) {
             mnemonic = prompt('BIP-39 mnemonic (for local file encryption): ');
         }
 
-        let wallets: Wallet[] = [];
-
+        let wallets = [];
         for (let i = 0; i < 10; i++) {
             let path = `m/44'/60'/0'/0/${i}`;
             let wallet = ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(mnemonic, path));
@@ -126,27 +133,54 @@ program
         });
 
         let validSelection = false;
-        let wallet;
-
+        let selectedWalletIndex, wallet: Wallet;
         while (!validSelection) {
-            let selectedWalletIndex = prompt('Select a wallet by entering its number: ');
+            selectedWalletIndex = prompt('Select a wallet by entering its number: ');
 
             // Check if the user's input is a number and is within the range
-            if (!isNaN(selectedWalletIndex) && selectedWalletIndex >= 0) {
-                let path = `m/44'/60'/0'/0/${selectedWalletIndex}`;
-                wallet = ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(mnemonic, path));
+            if (!isNaN(selectedWalletIndex) && selectedWalletIndex >= 0 && selectedWalletIndex < wallets.length) {
+                wallet = wallets[selectedWalletIndex];
                 console.log(`You selected the wallet at address ${wallet.address}`);
                 validSelection = true;
             } else {
-                console.log('Invalid selection');
+                console.log('Invalid selection, please try again.');
             }
         }
 
-        let jsonObject = {
-            accessKey: accessKey,
-            accessSecret: accessSecret,
-            mnemonic: mnemonic
+        let jsonObject: any = {
+            configType: configType,
+            mnemonic: mnemonic,
+            selectedWalletIndex: selectedWalletIndex
         };
+
+        if (configType === '1') {  // Own Account
+            const accessKey = prompt('GD Access Key ID: ').trim();
+            const accessSecret = prompt('GD Secret Access Key: ').trim();
+
+            jsonObject.accessKey = accessKey;
+            jsonObject.accessSecret = accessSecret;
+        } else if (configType === '2') {  // OAuth Client
+            const clientId = prompt('OAuth Client ID: ');
+            const clientSecret = prompt('OAuth Client Secret: ');
+
+            jsonObject.clientId = clientId;
+            jsonObject.clientSecret = clientSecret;
+
+            console.log(`Exporting ${wallet.address} public key to GhostDrive servers...`);
+            const oAuth = new oAuthClient(
+                process.env.BACKEND_ENDPOINT,
+                jsonObject.clientId,
+                jsonObject.clientSecret
+            );
+
+            const pair = await getUserRSAKeys({signer: wallet});
+            const pubKeyPem = forge.pki.publicKeyToPem(pair.publicKey);
+            await oAuth.exportKey(wallet.address, pubKeyPem);
+
+            console.log('Use `--oauth-jwt` param to pass authentication token to any command.');
+        }
+
+        // Convert jsonObject to a string and write to a file
         let jsonString = JSON.stringify(jsonObject, null, 2);
         try {
             fs.writeFileSync('.data/auth.json', jsonString);
@@ -158,9 +192,10 @@ program
 
 program
     .command('cp <from> <to>')
+    .option('--jwt <token>', 'Redefines JWT token')
     .description('Download or upload the file')
-    .action(async (from: string, to: string) => {
-        console.log({from, to});
+    .action(async (from: string, to: string, options: object) => {
+
         const prefix = 'gd://';
 
         const progressBar = new ProgressBar('[:bar] :percent :etas', { total: 100 });
@@ -215,7 +250,8 @@ async function download(workspaceId: string, filePath: string, localPath:string,
     const gdBackend = new gdBackendClient(
         process.env.BACKEND_ENDPOINT,
         creds.accessKey,
-        creds.accessSecret
+        creds.accessSecret,
+        creds.token
     );
     let entry = await gdBackend.entryDetails(workspaceId, filePath);
 
@@ -335,10 +371,9 @@ async function upload(
     const gdBackend = new gdBackendClient(
         process.env.BACKEND_ENDPOINT,
         creds.accessKey,
-        creds.accessSecret
+        creds.accessSecret,
+        creds.token
     );
-
-    // let entry = await gdBackend.entryDetails(workspaceId, filePath);
 
     const ott = await gdBackend.getUploadOTT(workspaceId, {
         size: stats.size,
@@ -440,7 +475,8 @@ program
             const gdBackend = new gdBackendClient(
                 process.env.BACKEND_ENDPOINT,
                 creds.accessKey,
-                creds.accessSecret
+                creds.accessSecret,
+                creds.token
             );
 
             const generator = await gdBackend.listFiles(workspaceId, filePath);
@@ -497,7 +533,8 @@ program
             const gdBackend = new gdBackendClient(
                 process.env.BACKEND_ENDPOINT,
                 creds.accessKey,
-                creds.accessSecret
+                creds.accessSecret,
+                creds.token
             );
 
             await gdBackend.rm(workspaceId, filePath);
