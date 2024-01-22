@@ -37,18 +37,27 @@ if (!process.env.BACKEND_ENDPOINT) {
 }
 
 
+// Initialize CLI
+const program = new Command();
+
+
+// Setup CLI commands
+
 async function loadAuth(): Promise<AuthConfig> {
     let rawData = fs.readFileSync('.data/auth.json', 'utf-8');
     let config: AuthConfig = JSON.parse(rawData);
     return config;
 }
 
-
-// Initialize CLI
-const program = new Command();
-
-
-// Setup CLI commands
+async function getGDClient(jwt: string|undefined): Promise<gdBackendClient> {
+    const creds = await loadAuth();
+    return new gdBackendClient(
+        process.env.BACKEND_ENDPOINT,
+        creds.accessKey,
+        creds.accessSecret,
+        jwt !== undefined ? jwt : creds.token
+    );
+}
 
 // Command to create a workspace
 program
@@ -62,12 +71,7 @@ program
         }
 
         try {
-            const gdClient = new gdBackendClient(
-                process.env.BACKEND_ENDPOINT,
-                options.jwt,
-                options.jwt,
-                options.jwt
-            );
+            const gdClient = await getGDClient(options.jwt);
             await gdClient.createWorkspace(name);
         } catch (error: any) {
             console.error(`Error creating workspace: ${(error as Error).message}`);
@@ -95,14 +99,7 @@ program
     .action(async (options: any) => {
 
         try {
-            let creds = await loadAuth();
-            const gdClient = new gdBackendClient(
-                process.env.BACKEND_ENDPOINT,
-                creds.accessKey,
-                creds.accessSecret,
-                options.jwt !== undefined ? options.jwt : creds.token
-            );
-
+            const gdClient = await getGDClient(options.jwt);
             let workspaces = await gdClient.listWorkspaces();
             console.table(workspaces);
 
@@ -194,8 +191,8 @@ program
     .command('cp <from> <to>')
     .option('--jwt <token>', 'Redefines JWT token')
     .description('Download or upload the file')
-    .action(async (from: string, to: string, options: object) => {
-
+    .action(async (from: string, to: string, options: any) => {
+        const gdClient = await getGDClient(options.jwt);
         const prefix = 'gd://';
 
         const progressBar = new ProgressBar('[:bar] :percent :etas', { total: 100 });
@@ -212,11 +209,11 @@ program
             throw new Error('Either "from" or "to" should start with "gd://"');
         } else if (from.startsWith(prefix)) {
             let { workspaceId, filePath } = parseGDPath(from);
-            return download(workspaceId, filePath, to, progressBar.tick.bind(progressBar), abortController.signal);
+            return download(workspaceId, filePath, to, progressBar.tick.bind(progressBar), abortController.signal, gdClient);
 
         } else if (to.startsWith(prefix)) {
             let { workspaceId, filePath } = parseGDPath(to);
-            return upload(from, workspaceId, filePath, progressBar.tick.bind(progressBar), abortController.signal);
+            return upload(from, workspaceId, filePath, progressBar.tick.bind(progressBar), abortController.signal, gdClient);
         }
 
     });
@@ -236,7 +233,13 @@ function parseGDPath(url: string) {
     return { workspaceId, filePath };
 }
 
-async function download(workspaceId: string, filePath: string, localPath:string, progressTick: () => void, signal: AbortSignal) {
+async function download(
+    workspaceId: string,
+    filePath: string,
+    localPath:string,
+    progressTick: () => void, signal: AbortSignal,
+    gdClient: gdBackendClient
+) {
 
     // Check if the path exists
     const pathName = path.dirname(localPath);
@@ -246,14 +249,7 @@ async function download(workspaceId: string, filePath: string, localPath:string,
         fs.mkdirSync(pathName, { recursive: true });
     }
 
-    let creds = await loadAuth();
-    const gdBackend = new gdBackendClient(
-        process.env.BACKEND_ENDPOINT,
-        creds.accessKey,
-        creds.accessSecret,
-        creds.token
-    );
-    let entry = await gdBackend.entryDetails(workspaceId, filePath);
+    let entry = await gdClient.entryDetails(workspaceId, filePath);
 
     if (fs.existsSync(localPath)) {
         const stats = fs.lstatSync(localPath);
@@ -274,7 +270,7 @@ async function download(workspaceId: string, filePath: string, localPath:string,
     }
 
     const encryptionDetails = entry.isClientsideEncrypted ?
-        await gdBackend.entryEncryptedDetails(entry) :
+        await gdClient.entryEncryptedDetails(entry) :
         [];
 
 
@@ -315,7 +311,7 @@ async function download(workspaceId: string, filePath: string, localPath:string,
     }
 
     //
-    const ott = await gdBackend.getDownloadOtt(workspaceId, entry);
+    const ott = await gdClient.getDownloadOtt(workspaceId, entry);
     const gdGateway = new gdGatewayClient();
 
     const tickBytesRange = Number(entry.size) / 100;
@@ -346,7 +342,12 @@ async function download(workspaceId: string, filePath: string, localPath:string,
 }
 
 async function upload(
-    localPath:string, workspaceId: string, destinationPath: string, progressTick: () => void, signal: AbortSignal
+    localPath:string,
+    workspaceId: string,
+    destinationPath: string,
+    progressTick: () => void,
+    signal: AbortSignal,
+    gdClient: gdBackendClient
 ) {
 
     let stats;
@@ -367,15 +368,7 @@ async function upload(
         process.exit(1);
     }
 
-    let creds = await loadAuth();
-    const gdBackend = new gdBackendClient(
-        process.env.BACKEND_ENDPOINT,
-        creds.accessKey,
-        creds.accessSecret,
-        creds.token
-    );
-
-    const ott = await gdBackend.getUploadOTT(workspaceId, {
+    const ott = await gdClient.getUploadOTT(workspaceId, {
         size: stats.size,
         name: path.basename(localPath)
     });
@@ -384,7 +377,7 @@ async function upload(
 
     let folderSlug = '';
     if (destinationPath !== '.' && destinationPath !== '/') {
-        folderSlug = await gdBackend.getFolderSlug(workspaceId, destinationPath);
+        folderSlug = await gdClient.getFolderSlug(workspaceId, destinationPath);
     }
 
     let localFile: LocalFileStream = new LocalFileStream(
@@ -415,10 +408,10 @@ async function upload(
     );
 
     await Promise.all([
-        gdBackend.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey),
+        gdClient.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey),
         gdGateway.saveThumb(
             localFile,
-            await gdBackend.getThumbOtt(
+            await gdClient.getThumbOtt(
                 workspaceId, {
                     size: stats.size,
                     name: path.basename(localPath)
@@ -448,7 +441,8 @@ program
 program
     .command('ls <folderPath>')
     .description('List all files in a workspace')
-    .action(async (folderPath: string) => {
+    .option('--jwt <token>', 'Redefines JWT token')
+    .action(async (folderPath: string, options: any) => {
 
         const {workspaceId, filePath} = parseGDPath(folderPath);
         function displayTable(entries: Entry[]): void {
@@ -470,16 +464,9 @@ program
         }
 
         try {
-            let creds = await loadAuth();
+            const gdClient = await getGDClient(options.jwt);
 
-            const gdBackend = new gdBackendClient(
-                process.env.BACKEND_ENDPOINT,
-                creds.accessKey,
-                creds.accessSecret,
-                creds.token
-            );
-
-            const generator = await gdBackend.listFiles(workspaceId, filePath);
+            const generator = await gdClient.listFiles(workspaceId, filePath);
             let keepGoing = true;
 
             while (keepGoing) {
@@ -524,20 +511,13 @@ program
 program
     .command('rm <folderPath>')
     .description('Delete a file from a workspace')
-    .action(async (folderPath: string) => {
+    .action(async (folderPath: string, options: any) => {
         try {
             const {workspaceId, filePath} = parseGDPath(folderPath);
 
-            let creds = await loadAuth();
+            const gdClient = await getGDClient(options.jwt);
 
-            const gdBackend = new gdBackendClient(
-                process.env.BACKEND_ENDPOINT,
-                creds.accessKey,
-                creds.accessSecret,
-                creds.token
-            );
-
-            await gdBackend.rm(workspaceId, filePath);
+            await gdClient.rm(workspaceId, filePath);
 
             console.log(`${filePath} successfully deleted from ${workspaceId}`);
 
