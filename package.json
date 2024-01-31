@@ -1,5 +1,5 @@
 {
-  "name": "@ghostdrive/gd-cli",
+  "name": "@ghost-drive/gd-cli",
   "version": "v0.0.1",
   "description": "Ghostdrive CLI tools",
   "main": "cli.ts",
