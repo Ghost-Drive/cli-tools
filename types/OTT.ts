@@ -8,11 +8,30 @@ export interface OTT {
     filename: string;
     filesize: string;
     action: OTTAction;
-    endpoint: Endpoint;
+    gateway: Gateway;
+    storageProviders: StorageProviders;
+    isOnStorageProvider: IsOnStorageProvider;
     token: string;
+    uploadChunkSize: UploadChunkSize;
 }
 
-interface Endpoint {
+interface Gateway {
+    id: number;
     url: string;
-    sameIpUpload: boolean
+    uploadChunkSize: number;
+    type: string;
+    sameIpUpload: false;
+    interimChunkSize: number;
+}
+
+interface StorageProviders {
+    [key: string]: null | undefined;
+}
+
+interface IsOnStorageProvider {
+    [key: string]: boolean;
+}
+
+interface UploadChunkSize {
+    [key: string]: null | number | undefined;
 }

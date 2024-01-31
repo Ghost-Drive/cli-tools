@@ -17,16 +17,21 @@ class gdBackendClient {
     private readonly backendUrl: string;
     private readonly accessKey?: string;
     private readonly accessSecret?: string;
-    private token?: string;
+    private jwt?: string;
+    private accessToken?: string;
     private wsId: string;
     private authorizedAxios: AxiosInstance;
 
-    constructor(backendUrl: string, accessKey?: string, accessSecret?: string, token?: string) {
+    constructor(backendUrl: string, accessKey?: string, accessSecret?: string, jwt?: string, accessToken?: string) {
         this.backendUrl = backendUrl;
         this.accessKey = accessKey;
         this.accessSecret = accessSecret;
-        if (token !== undefined) {
-            this.token = token;
+        if (jwt !== undefined) {
+            this.jwt = jwt;
+        }
+
+        if (accessToken !== undefined) {
+            this.accessToken = accessToken;
         }
     }
 
@@ -88,7 +93,15 @@ class gdBackendClient {
 
 
     async auth() {
-        if (this.token === undefined) {
+        let authHeaders = {};
+        if (this.accessToken != undefined) {
+            authHeaders['Authorization'] = 'Bearer ' + this.accessToken;
+        }
+        if (this.jwt != undefined) {
+            authHeaders['X-Token'] = 'Bearer ' + this.jwt;
+        }
+
+        if (Object.keys(authHeaders).length === 0) {
             const postData = {
                 access_key: this.accessKey,
                 access_secret: this.accessSecret
@@ -105,19 +118,22 @@ class gdBackendClient {
                     }
                 );
 
-                this.token = response.data.token;
-
-                this.authorizedAxios = axios.create({
-                    headers: {
-                        'X-Token': 'Bearer ' + this.token,
-                    },
-                });
+                this.jwt = response.data.jwt;
+                authHeaders['X-Token'] = 'Bearer ' + this.jwt;
 
             } catch (error) {
                 this.logAxiosError(error);
                 throw error;
             }
         }
+
+        this.authorizedAxios = axios.create({
+            headers: {
+                ...authHeaders,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/plain, */*'
+            },
+        });
 
     }
 
@@ -128,25 +144,27 @@ class gdBackendClient {
         const data = { slug: entry.slug };
 
         try {
-            const response = await axios.post(
+            const response = await this.authorizedAxios.post(
                 this.backendUrl + 'api/download/generate/token',
-                data,
-                {
-                headers: {
-                    'content-type': 'application/json',
-                    'X-Token': 'Bearer ' + this.token
-                }
-            });
+                data
+            );
 
             return {
                 filename: entry.name,
                 filesize: entry.size,
                 action: OTTAction.Download,
-                endpoint: {
-                    url: response.data.endpoint,
-                    sameIpUpload: response.data.sameIpUpload
+                token: response.data.user_tokens.jwt,
+                gateway: {
+                    sameIpUpload: response.data.gateway.same_ip_upload,
+                    id: response.data.gateway.id,
+                    uploadChunkSize: response.data.gateway.upload_chunk_size,
+                    interimChunkSize: response.data.gateway.interim_chunk_size,
+                    url: response.data.gateway.url,
+                    type: response.data.gateway.type
                 },
-                token: response.data.user_tokens.token
+                storageProviders: response.data.storage_providers,
+                isOnStorageProvider: response.data.is_on_storage_provider,
+                uploadChunkSize: response.data.upload_chunk_size
             };
 
         } catch (error) {
@@ -158,14 +176,9 @@ class gdBackendClient {
         await this.auth();
         await this.setWS(file.workspaceId);
         const url = this.backendUrl + 'api/keys/get-encrypted-file-details?slug=' + file.slug;
-        const headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json',
-            'X-Token': 'Bearer ' + this.token
-        };
 
         try {
-            const response = await axios.get(url, { headers });
+            const response = await this.authorizedAxios.get(url);
 
             let result:EntryEncryptedDetails[]  = [];
 
@@ -196,13 +209,7 @@ class gdBackendClient {
         // await this.setWS(workspaceId);
         const url = this.backendUrl + 'api/keys/get_workspace';
 
-        const headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json',
-            'X-Token': 'Bearer ' + this.token
-        };
-
-        const response = await axios.get(url, { headers });
+        const response = await this.authorizedAxios.get(url);
 
         if (!Array.isArray(response.data.keys)) {
             throw new Error('Unexpected response for workspace pem keys');
@@ -216,20 +223,13 @@ class gdBackendClient {
         await this.setWS(workspaceId);
 
         const url = this.backendUrl + 'api/file/info';
-        const headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Content-Type': 'application/json',
-            'X-Token': 'Bearer ' + this.token
-        };
 
         try {
 
-            const response = await axios.post(
+            const response = await this.authorizedAxios.post(
                 url,
-                { 'path': filePath },
-                { headers }
+                { 'path': filePath }
             );
-
 
             return {
                 name: response.data.name,
@@ -253,18 +253,11 @@ class gdBackendClient {
     private async setWS(workspaceId: string): Promise<boolean> {
         if (workspaceId !== this.wsId) {
             try {
-                const headers = {
-                    'accept': 'application/json, text/plain, */*',
-                    'content-type': 'application/json',
-                    'X-Token': 'Bearer ' + this.token
-                };
-                const response = await axios.get(
+                const response = await this.authorizedAxios.get(
                     this.backendUrl + 'api/workspace/switch?workspace_id=' + workspaceId,
-                    {
-                        headers: headers
-                    });
+                );
 
-                this.token = response.data.token;
+                this.jwt = response.data.jwt;
                 this.wsId = workspaceId;
                 return true;
             } catch (error) {
@@ -274,30 +267,41 @@ class gdBackendClient {
     }
 
     public async createWorkspace(workspaceName: string): Promise<Workspace> {
+        await this.auth();
+
         // works only for authentificated by oAuth token
         const data = { name: workspaceName };
 
         try {
             const url = this.backendUrl.replace(/\/+$/, '') + '/apiv2/workspace/create';
 
-            const tokenHeader = this.accessKey === undefined ? 'Authorization' : 'X-Token';
-
-            const response = await axios.post(
+            const response = await this.authorizedAxios.post(
                 url,
-                data,
-                {
-                    headers: {
-                        'content-type': 'application/json',
-                        tokenHeader: 'Bearer ' + this.token,
-                        'Authorization': 'Bearer ' + this.token
-                    }
-                });
+                data
+            );
 
             return {
                 name: response.data.name,
                 id: response.data.id
             };
 
+        } catch (error) {
+            this.logAxiosError(error);
+        }
+    }
+
+    public async manageKey(slug: string, base64EncryptionKey: string) {
+        const url = this.backendUrl + 'api/keys/manage-key';
+        const data = {
+            slug: slug,
+            encryptionKey: base64EncryptionKey,
+        };
+
+        try {
+            const resp = await this.authorizedAxios.post(
+                url,
+                data
+            );
         } catch (error) {
             this.logAxiosError(error);
         }
@@ -317,7 +321,7 @@ class gdBackendClient {
         }
 
         const resp = await this.authorizedAxios.post(
-            this.backendUrl + `/keys/save_encrypted_file_keys`,
+            this.backendUrl + `api/keys/save_encrypted_file_keys`,
             {
                 slug,
                 encryptedKeys
@@ -342,25 +346,26 @@ class gdBackendClient {
             };
 
             const response = await this.authorizedAxios.post(
-                this.backendUrl + "/user/generate/token",
-                data,
-                {
-                    headers: {
-                        'accept': 'application/json, text/plain, */*',
-                        'content-type': 'application/json'
-                    }
-                }
+                this.backendUrl + "api/user/generate/token",
+                data
             );
 
             return {
                 filename: entry.name,
                 filesize: entry.size,
                 action: OTTAction.Upload,
-                endpoint: {
-                    url: response.data.endpoint,
-                    sameIpUpload: response.data.sameIpUpload
+                token: response.data.user_token.token,
+                gateway: {
+                    sameIpUpload: response.data.gateway.same_ip_upload,
+                    id: response.data.gateway.id,
+                    uploadChunkSize: response.data.gateway.upload_chunk_size,
+                    interimChunkSize: response.data.gateway.interim_chunk_size,
+                    url: response.data.gateway.url,
+                    type: response.data.gateway.type
                 },
-                token: response.data.user_token.token
+                storageProviders: response.data.storage_providers,
+                isOnStorageProvider: response.data.is_on_storage_provider,
+                uploadChunkSize: response.data.upload_chunk_size
             };
 
         } catch (error) {
@@ -376,16 +381,10 @@ class gdBackendClient {
         destinationPath = destinationPath.replace(/^\/+|\/+$/g, '');
         try {
             const response = await this.authorizedAxios.post(
-                this.backendUrl + "/folders/folder",
+                this.backendUrl + "api/folders/folder",
                 {
                     name: destinationPath,
                     parent: null
-                },
-                {
-                    headers: {
-                        'accept': 'application/json, text/plain, */*',
-                        'content-type': 'application/json',
-                    }
                 }
             );
 
@@ -395,12 +394,26 @@ class gdBackendClient {
         }
     }
 
-    async deleteWorkspace(name:string): Promise<boolean> {
-        return true;
-    }
-
     public async listWorkspaces(): Promise<Workspace[]> {
-        return [];
+        await this.auth();
+
+        try {
+            const response = await this.authorizedAxios.get(
+                this.backendUrl + "api/user/workspaces"
+            );
+
+            return response.data.data.map((row: any) => {
+                return {
+                    id: row.workspace.id,
+                    name: row.workspace.name,
+                    slug: row.workspace.slug,
+                    role: row.role
+                };
+            });
+        } catch (error) {
+            this.logAxiosError(error);
+        }
+
     }
 
     async rm(workspaceId:string, filePath:string): Promise<boolean> {
@@ -411,10 +424,6 @@ class gdBackendClient {
             const response = await this.authorizedAxios({
                 method: 'DELETE',
                 url: this.backendUrl + 'api/files/multiply/delete',
-                headers: {
-                    'accept': 'application/json, text/plain, */*',
-                    'content-type': 'application/json',
-                },
                 data: [entry.slug]
             });
 

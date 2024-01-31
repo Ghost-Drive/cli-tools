@@ -3,4 +3,5 @@ export interface AuthConfig {
     accessSecret: string;
     mnemonic: string;
     token: string;
+    jwt: string;
 }

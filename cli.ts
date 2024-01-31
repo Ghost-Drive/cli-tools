@@ -4,6 +4,7 @@ import {oAuthClient} from './oAuthClient';
 import {Command} from 'commander';
 import {config} from 'dotenv';
 import {AuthConfig} from "./types/AuthConfig";
+import {FileKey} from "./types/FileKey";
 import * as mime from 'mime';
 import * as forge from "node-forge";
 import * as fs from 'fs';
@@ -43,36 +44,40 @@ const program = new Command();
 
 // Setup CLI commands
 
-async function loadAuth(): Promise<AuthConfig> {
+async function loadCreds(): Promise<AuthConfig> {
     let rawData = fs.readFileSync('.data/auth.json', 'utf-8');
     let config: AuthConfig = JSON.parse(rawData);
     return config;
 }
 
-async function getGDClient(jwt: string|undefined): Promise<gdBackendClient> {
-    const creds = await loadAuth();
+async function getGDBackendClient(accessToken: string|undefined): Promise<gdBackendClient> {
+    const creds = await loadCreds();
     return new gdBackendClient(
         process.env.BACKEND_ENDPOINT,
         creds.accessKey,
         creds.accessSecret,
-        jwt !== undefined ? jwt : creds.token
+        creds.jwt,
+        accessToken
     );
 }
 
 // Command to create a workspace
 program
     .command('create-workspace <name>')
-    .option('--jwt <token>', 'Redefines JWT token')
+    .option('--oAuthToken <token>', 'Redefines JWT token')
     .description('Create a new workspace')
     .action(async (name: string, options: any) => {
-        if (!options.jwt) {
-            console.error('Error: --jwt option is required as this command is only for oAuth usage');
+        console.log('af');
+        if (!options.oAuthToken) {
+            console.error('Error: --oAuthToken option is required as this command is only for oAuth usage');
             process.exit(1); // Exit with error code
         }
 
         try {
-            const gdClient = await getGDClient(options.jwt);
-            await gdClient.createWorkspace(name);
+            const gdClient = await getGDBackendClient(options.oAuthToken);
+            const wsDetails = await gdClient.createWorkspace(name);
+            console.log('done', wsDetails);
+
         } catch (error: any) {
             console.error(`Error creating workspace: ${(error as Error).message}`);
         }
@@ -81,7 +86,7 @@ program
 // Command to delete a workspace
 program
     .command('delete-workspace <id>')
-    .option('--jwt <token>', 'Redefines JWT token')
+    .option('--oAuthToken <token>', 'Redefines JWT token')
     .description('Delete a workspace')
     .action(async (name: string, options: any) => {
         try {
@@ -94,12 +99,12 @@ program
 // Command to list all workspaces
 program
     .command('list-workspaces')
-    .option('--jwt <token>', 'Redefines JWT token')
+    .option('--oAuthToken <token>', 'Redefines JWT token')
     .description('List all workspaces')
     .action(async (options: any) => {
 
         try {
-            const gdClient = await getGDClient(options.jwt);
+            const gdClient = await getGDBackendClient(options.oAuthToken);
             let workspaces = await gdClient.listWorkspaces();
             console.table(workspaces);
 
@@ -188,11 +193,21 @@ program
     });
 
 program
+    .command('share-by-link <pathOrSlug>')
+    .option('--includeDecryptionKey', 'if set, decryption key will be included in the link')
+    .option('--oAuthToken <token>', 'Defines oAuth token')
+    .action(async (from:string, to: string, options: any) =>{
+        console.log('not implemented');
+    });
+
+program
     .command('cp <from> <to>')
-    .option('--jwt <token>', 'Redefines JWT token')
+    .option('--oAuthToken <token>', 'Defines oAuth token')
+    .option('--manageKey', 'Stores file decryption key to GD')
     .description('Download or upload the file')
     .action(async (from: string, to: string, options: any) => {
-        const gdClient = await getGDClient(options.jwt);
+
+        const gdClient = await getGDBackendClient(options.oAuthToken);
         const prefix = 'gd://';
 
         const progressBar = new ProgressBar('[:bar] :percent :etas', { total: 100 });
@@ -209,11 +224,16 @@ program
             throw new Error('Either "from" or "to" should start with "gd://"');
         } else if (from.startsWith(prefix)) {
             let { workspaceId, filePath } = parseGDPath(from);
-            return download(workspaceId, filePath, to, progressBar.tick.bind(progressBar), abortController.signal, gdClient);
+            await download(workspaceId, filePath, to, progressBar.tick.bind(progressBar), abortController.signal, gdClient);
+            console.log('Successfully downloaded');
 
         } else if (to.startsWith(prefix)) {
             let { workspaceId, filePath } = parseGDPath(to);
-            return upload(from, workspaceId, filePath, progressBar.tick.bind(progressBar), abortController.signal, gdClient);
+            await upload(
+                from, workspaceId, filePath, progressBar.tick.bind(progressBar),
+                abortController.signal, gdClient, options.manageKey
+            );
+            console.log('Successfully uploaded');
         }
 
     });
@@ -280,7 +300,7 @@ async function download(
 
 
     let fileKey: {key,iv,clientsideKeySha3Hash};
-
+    const creds = await loadCreds();
     if (entry.isClientsideEncrypted) {
         // decode file key
         const keys = await KeysAccess.create(creds.mnemonic, 100);
@@ -347,8 +367,9 @@ async function upload(
     destinationPath: string,
     progressTick: () => void,
     signal: AbortSignal,
-    gdClient: gdBackendClient
-) {
+    gdClient: gdBackendClient,
+    manageKey: boolean
+)  {
 
     let stats;
     if (fs.existsSync(localPath)) {
@@ -407,7 +428,7 @@ async function upload(
         signal
     );
 
-    await Promise.all([
+    let processes = [
         gdClient.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey),
         gdGateway.saveThumb(
             localFile,
@@ -418,7 +439,13 @@ async function upload(
                 }),
             uploadedEntry.slug
         )
-    ]);
+    ];
+
+    if (manageKey) {
+        processes.push(gdClient.manageKey(uploadedEntry.slug, uploadedEntry.clientsideKey));
+    }
+
+    await Promise.all(processes);
 
 }
 
@@ -427,7 +454,7 @@ program
     .description('Wallets')
     .action(async (workspace: string) => {
         try {
-            let creds = await loadAuth();
+            let creds = await loadCreds();
             let keys = await KeysAccess.create(creds.mnemonic, 100);
             console.log(keys.getAddresses());
         } catch (error) {
@@ -441,7 +468,7 @@ program
 program
     .command('ls <folderPath>')
     .description('List all files in a workspace')
-    .option('--jwt <token>', 'Redefines JWT token')
+    .option('--oAuthToken <token>', 'defines oAuthToken token')
     .action(async (folderPath: string, options: any) => {
 
         const {workspaceId, filePath} = parseGDPath(folderPath);
@@ -464,7 +491,7 @@ program
         }
 
         try {
-            const gdClient = await getGDClient(options.jwt);
+            const gdClient = await getGDBackendClient(options.oAuthToken);
 
             const generator = await gdClient.listFiles(workspaceId, filePath);
             let keepGoing = true;
@@ -510,12 +537,13 @@ program
 
 program
     .command('rm <folderPath>')
+    .option('--oAuthToken <token>', 'defines oAuthToken token')
     .description('Delete a file from a workspace')
     .action(async (folderPath: string, options: any) => {
         try {
             const {workspaceId, filePath} = parseGDPath(folderPath);
 
-            const gdClient = await getGDClient(options.jwt);
+            const gdClient = await getGDBackendClient(options.oAuthToken);
 
             await gdClient.rm(workspaceId, filePath);
 

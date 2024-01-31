@@ -47,7 +47,7 @@ class gdGatewayClient {
             {
                 file: localFile,
                 oneTimeToken: ott.token,
-                endpoint: ott.endpoint.url,
+                endpoint: ott.gateway.url,
                 callback,
                 handlers,
                 key
@@ -87,7 +87,7 @@ class gdGatewayClient {
         // });
         //
         // if (base64Image) {
-        //     const instance = axios.create({
+        //     const instance = this.authorizedAxios.create({
         //         headers: {
         //             "x-file-name": file.name,
         //             "Content-Type": "application/octet-stream",
@@ -120,7 +120,7 @@ class gdGatewayClient {
             file: currentFile,
             oneTimeToken: ott.token,
             signal: signal,
-            endpoint: ott.endpoint.url,
+            endpoint: ott.gateway.url,
             isEncrypted: file.isClientsideEncrypted,
             key: decryptionKey.key,
             callback:  ({ type, params }) => { // use 'callback' as parameter
