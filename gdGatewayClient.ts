@@ -1,16 +1,12 @@
-import axios from 'axios';
-import { GDStorage } from './types/GDStorage';
-import { Workspace } from './types/Workspace';
+// @ts-nocheck
 import {Entry, EntryType} from "./types/Entry";
-import * as fs from 'fs';
 import {OTT, OTTAction} from "./types/OTT";
-import { downloadFile, uploadFile, LocalFileStream, getThumbnailImage} from 'gdgateway-client/lib/es5';
+import { CarReader } from '@ipld/car/reader';
+import { LocalFileStream, downloadFile, uploadFile } from 'gdgateway-client';
 import * as Base64 from 'base64-js';
-
-import {getCrypto} from "gdgateway-client/lib/es5/utils/getCrypto";
+import { getCrypto } from 'gdgateway-client/utils/getCrypto';
 
 const crypto = getCrypto();
-
 
 const convertArrayBufferToBase64 = (buffer: any) => {
     const bytes = new Uint8Array(buffer);
@@ -47,12 +43,14 @@ class gdGatewayClient {
             {
                 file: localFile,
                 oneTimeToken: ott.token,
-                endpoint: ott.gateway.url,
+                gateway: ott.gateway,
                 callback,
                 handlers,
-                key
+                key,
+                //     progress: undefined,
+                //     totalSize: undefined,
+                //     startedAt: undefined
             }
-            ,signal
         );
 
 
@@ -100,8 +98,10 @@ class gdGatewayClient {
         // return true;
     };
 
-    async downloadFile(file:Entry, ott:OTT, callback: any, signal, decryptionKey: {iv, clientsideKeySha3Hash, key} | null)
-    {
+    async downloadFile(
+        file:Entry, ott:OTT, callback: any,
+        signal, decryptionKey: {iv, clientsideKeySha3Hash, key} | null, cidData: any
+    ) {
         let currentFile = {
             slug: file.slug,
             entry_clientside_key: decryptionKey,
@@ -122,7 +122,10 @@ class gdGatewayClient {
             signal: signal,
             endpoint: ott.gateway.url,
             isEncrypted: file.isClientsideEncrypted,
-            key: decryptionKey.key,
+            key: (decryptionKey ? decryptionKey.key : undefined),
+            carReader: CarReader,
+            uploadChunkSize: ott.uploadChunkSize[file.slug] || ott.gateway.upload_chunk_size,
+            cidData,
             callback:  ({ type, params }) => { // use 'callback' as parameter
                 if (handlers.includes(type)) {
                     callbacks[type]({ ...params });

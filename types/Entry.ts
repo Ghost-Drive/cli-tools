@@ -8,7 +8,7 @@ export interface Entry {
     iv: string;
     sha3Hash: string;
     type: EntryType;
-    clientsideKey: string;
+    clientsideKey: string|null;
 }
 
 export enum EntryType {

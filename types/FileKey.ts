@@ -1,5 +1,5 @@
 export interface FileKey {
-    Delete,
-    Upload,
-    Download,
+    key,
+    iv,
+    clientsideKeySha3Hash
 }

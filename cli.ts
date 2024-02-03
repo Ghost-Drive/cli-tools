@@ -1,35 +1,31 @@
-#!/usr/bin/env ts-node
-import {gdBackendClient} from './gdBackendClient';
-import {oAuthClient} from './oAuthClient';
+// @ts-nocheck
+import {gdBackendClient} from './gdBackendClient.js';
+import {oAuthClient} from './oAuthClient.js';
 import {Command} from 'commander';
 import {config} from 'dotenv';
-import {AuthConfig} from "./types/AuthConfig";
-import {FileKey} from "./types/FileKey";
-import * as mime from 'mime';
-import * as forge from "node-forge";
-import * as fs from 'fs';
+import {AuthConfig} from "./types/AuthConfig.js";
+import mime from 'mime';
+import forge from "node-forge";
+import fs from 'fs';
 import {Wallet} from "ethers";
-import {Entry, EntryType} from "./types/Entry";
-import {gdGatewayClient} from "./gdGatewayClient";
-import {KeysAccess} from "./KeysAccess";
+import {Entry, EntryType} from "./types/Entry.js";
+import {gdGatewayClient} from "./gdGatewayClient.js";
+import {KeysAccess} from "./KeysAccess.js";
 
-import {getUserRSAKeys} from "gdgateway-client/lib/es5";
-
-import path = require("path");
+// import path = require("path");
+import * as path from 'path';
 
 config();
 
-import {
-    LocalFileStream
-} from "gdgateway-client/lib/es5";
+import { LocalFileStream, getUserRSAKeys } from 'gdgateway-client';
 
-const prompt = require('prompt-sync')({sigint: true});
-const ethers = require("ethers");
-const ProgressBar = require('progress');
+import prompt_sync from "prompt-sync";
 
+const prompt = prompt_sync({sigint: true});
 
-import { pipeline } from 'stream';
-import { promisify } from 'util';
+import * as ethers from "ethers";
+
+import ProgressBar from "progress";
 
 config();
 
@@ -52,6 +48,9 @@ async function loadCreds(): Promise<AuthConfig> {
 
 async function getGDBackendClient(accessToken: string|undefined): Promise<gdBackendClient> {
     const creds = await loadCreds();
+    if (!process.env.BACKEND_ENDPOINT) {
+        throw new Error('No BACKEND_ENDPOINT');
+    }
     return new gdBackendClient(
         process.env.BACKEND_ENDPOINT,
         creds.accessKey,
@@ -123,7 +122,7 @@ program
             mnemonic = prompt('BIP-39 mnemonic (for local file encryption): ');
         }
 
-        let wallets = [];
+        let wallets: any[] = [];
         for (let i = 0; i < 10; i++) {
             let path = `m/44'/60'/0'/0/${i}`;
             let wallet = ethers.HDNodeWallet.fromMnemonic(ethers.Mnemonic.fromPhrase(mnemonic, path));
@@ -136,6 +135,7 @@ program
 
         let validSelection = false;
         let selectedWalletIndex, wallet: Wallet;
+        wallet = wallets[0];
         while (!validSelection) {
             selectedWalletIndex = prompt('Select a wallet by entering its number: ');
 
@@ -169,6 +169,9 @@ program
             jsonObject.clientSecret = clientSecret;
 
             console.log(`Exporting ${wallet.address} public key to GhostDrive servers...`);
+            if (!process.env.BACKEND_ENDPOINT) {
+                throw new Error('No BACKEND_ENDPOINT');
+            }
             const oAuth = new oAuthClient(
                 process.env.BACKEND_ENDPOINT,
                 jsonObject.clientId,
@@ -179,7 +182,7 @@ program
             const pubKeyPem = forge.pki.publicKeyToPem(pair.publicKey);
             await oAuth.exportKey(wallet.address, pubKeyPem);
 
-            console.log('Use `--oauth-jwt` param to pass authentication token to any command.');
+            console.log('Use `--oAuthToken` param to pass authentication token to any command.');
         }
 
         // Convert jsonObject to a string and write to a file
@@ -269,8 +272,10 @@ async function download(
         fs.mkdirSync(pathName, { recursive: true });
     }
 
-    let entry = await gdClient.entryDetails(workspaceId, filePath);
-
+    let entry = await gdClient.getEntryDetails(workspaceId, filePath);
+    if (entry === undefined) {
+        throw new Error('Unable to fetch file details');
+    }
     if (fs.existsSync(localPath)) {
         const stats = fs.lstatSync(localPath);
 
@@ -299,7 +304,8 @@ async function download(
     }
 
 
-    let fileKey: {key,iv,clientsideKeySha3Hash};
+    let fileKey: any = null;
+
     const creds = await loadCreds();
     if (entry.isClientsideEncrypted) {
         // decode file key
@@ -332,13 +338,25 @@ async function download(
 
     //
     const ott = await gdClient.getDownloadOtt(workspaceId, entry);
+
+    if (!ott) {
+        throw new Error('Unable to get download OTT');
+    }
+    let cidData;
+    if (ott.isOnStorageProvider[entry.slug]) {
+        cidData = await gdClient.getFileCids(entry.slug);
+    }
+
     const gdGateway = new gdGatewayClient();
 
     const tickBytesRange = Number(entry.size) / 100;
     const ticksPerTick = 104857600 / Number(entry.size);
     let tickedAtByte = 0;
 
-    const readable = await gdGateway.downloadFile(entry, ott, function (progress) {
+    const readable = await gdGateway.downloadFile(
+        entry,
+        ott,
+        function (progress) {
         if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
             tickedAtByte = progress.progress;
 
@@ -346,7 +364,11 @@ async function download(
                 progressTick();
             }
         }
-    }, signal, fileKey);
+    },
+        signal,
+        fileKey,
+        cidData
+    );
 
     const writable = fs.createWriteStream(localPath);
 
@@ -370,7 +392,6 @@ async function upload(
     gdClient: gdBackendClient,
     manageKey: boolean
 )  {
-
     let stats;
     if (fs.existsSync(localPath)) {
         stats = fs.lstatSync(localPath);
@@ -393,6 +414,9 @@ async function upload(
         size: stats.size,
         name: path.basename(localPath)
     });
+    if (!ott) {
+        throw new Error('Unable to fetch OTT');
+    }
 
     // get folder id
 
@@ -405,7 +429,8 @@ async function upload(
         stats.size,
         localPath,
         mime.getType(localPath),
-        folderSlug
+        folderSlug,
+        ott.token // @todo is it ok for uploadId?
     );
     const gdGateway = new gdGatewayClient();
 
@@ -428,20 +453,20 @@ async function upload(
         signal
     );
 
-    let processes = [
-        gdClient.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey),
-        gdGateway.saveThumb(
-            localFile,
-            await gdClient.getThumbOtt(
-                workspaceId, {
-                    size: stats.size,
-                    name: path.basename(localPath)
-                }),
-            uploadedEntry.slug
-        )
-    ];
+    let processes = [];
+    // if (false) {
+    //     processes.push(gdGateway.saveThumb(
+    //         localFile,
+    //         ott,
+    //         uploadedEntry.slug
+    //     ));
+    // }
 
-    if (manageKey) {
+    if (uploadedEntry.clientsideKey) {
+        processes.push(gdClient.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey));
+    }
+
+    if (manageKey && uploadedEntry.clientsideKey) {
         processes.push(gdClient.manageKey(uploadedEntry.slug, uploadedEntry.clientsideKey));
     }
 

@@ -1,3 +1,5 @@
+import { GatewayType} from "gdgateway-client";
+
 export enum OTTAction {
     Delete,
     Upload,
@@ -8,7 +10,7 @@ export interface OTT {
     filename: string;
     filesize: string;
     action: OTTAction;
-    gateway: Gateway;
+    gateway: GatewayType;
     storageProviders: StorageProviders;
     isOnStorageProvider: IsOnStorageProvider;
     token: string;

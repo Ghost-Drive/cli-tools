@@ -1,14 +1,8 @@
-import {GDStorage} from './types/GDStorage';
-import {Workspace} from './types/Workspace';
-import {Entry, EntryType} from "./types/Entry";
-import {EntryEncryptedDetails} from "./types/EntryEncryptedDetails";
-import {OTT, OTTAction} from "./types/OTT";
-import * as forge from "node-forge";
-import curlirize from 'axios-curlirize';
-
-
-// @ts-ignore
-import path from 'path';
+import {Workspace} from './types/Workspace.js';
+import {Entry, EntryType} from "./types/Entry.js";
+import {EntryEncryptedDetails} from "./types/EntryEncryptedDetails.js";
+import {OTT, OTTAction} from "./types/OTT.js";
+import forge from "node-forge";
 import axios, {AxiosInstance} from 'axios';
 
 
@@ -19,8 +13,8 @@ class gdBackendClient {
     private readonly accessSecret?: string;
     private jwt?: string;
     private accessToken?: string;
-    private wsId: string;
-    private authorizedAxios: AxiosInstance;
+    private wsId!: string;
+    private authorizedAxios!: AxiosInstance;
 
     constructor(backendUrl: string, accessKey?: string, accessSecret?: string, jwt?: string, accessToken?: string) {
         this.backendUrl = backendUrl;
@@ -44,13 +38,14 @@ class gdBackendClient {
             dirSlug = '';
         } else {
 
-            const entry = await this.entryDetails(workspaceName, dir);
+            const entry = await this.getEntryDetails(workspaceName, dir);
+            if (entry) {
+                if (entry.type !== EntryType.FOLDER) {
+                    throw new Error(`${dir} is not a folder`);
+                }
 
-            if (entry.type !== EntryType.FOLDER) {
-                throw new Error(`${dir} is not a folder`);
+                dirSlug = entry.slug;
             }
-
-            dirSlug = entry.slug;
         }
 
 
@@ -137,7 +132,14 @@ class gdBackendClient {
 
     }
 
-    async getDownloadOtt(workspaceId:string, entry:Entry): Promise<OTT> {
+    async getFileCids(slug: string): Promise<any> {
+        const response: any = await this.authorizedAxios.get(
+            this.backendUrl + 'api/cid/${slug}/interim'
+        );
+        return response.data;
+    }
+
+    async getDownloadOtt(workspaceId:string, entry:Entry): Promise<OTT|undefined> {
         await this.auth();
         await this.setWS(workspaceId);
 
@@ -153,12 +155,12 @@ class gdBackendClient {
                 filename: entry.name,
                 filesize: entry.size,
                 action: OTTAction.Download,
-                token: response.data.user_tokens.jwt,
+                token: response.data.user_tokens.token,
                 gateway: {
-                    sameIpUpload: response.data.gateway.same_ip_upload,
+                    same_ip_upload: response.data.gateway.same_ip_upload,
                     id: response.data.gateway.id,
-                    uploadChunkSize: response.data.gateway.upload_chunk_size,
-                    interimChunkSize: response.data.gateway.interim_chunk_size,
+                    upload_chunk_size: response.data.gateway.upload_chunk_size,
+                    interim_chunk_size: response.data.gateway.interim_chunk_size,
                     url: response.data.gateway.url,
                     type: response.data.gateway.type
                 },
@@ -202,6 +204,8 @@ class gdBackendClient {
         } catch (error) {
             this.logAxiosError(error);
         }
+
+        return [];
     }
 
     private async getWorkspaceKeys(): Promise<string[]> {
@@ -218,7 +222,7 @@ class gdBackendClient {
         return response.data.keys;
     }
 
-    public async entryDetails(workspaceId: string, filePath: string): Promise<Entry> {
+    public async getEntryDetails(workspaceId: string, filePath: string): Promise<Entry|undefined> {
         await this.auth();
         await this.setWS(workspaceId);
 
@@ -245,7 +249,9 @@ class gdBackendClient {
             };
 
         } catch (error) {
-            this.logAxiosError(error);
+            if(error.response.status !== 404) {
+                this.logAxiosError(error);
+            }
         }
     }
 
@@ -256,17 +262,20 @@ class gdBackendClient {
                 const response = await this.authorizedAxios.get(
                     this.backendUrl + 'api/workspace/switch?workspace_id=' + workspaceId,
                 );
-
-                this.jwt = response.data.jwt;
+                if (this.jwt) {
+                    this.jwt = response.data.token;
+                }
                 this.wsId = workspaceId;
                 return true;
             } catch (error) {
                 this.logAxiosError(error);
             }
         }
+
+        return false;
     }
 
-    public async createWorkspace(workspaceName: string): Promise<Workspace> {
+    public async createWorkspace(workspaceName: string): Promise<Workspace|undefined> {
         await this.auth();
 
         // works only for authentificated by oAuth token
@@ -290,7 +299,7 @@ class gdBackendClient {
         }
     }
 
-    public async manageKey(slug: string, base64EncryptionKey: string) {
+    public async manageKey(slug: string, base64EncryptionKey: string): Promise<boolean> {
         const url = this.backendUrl + 'api/keys/manage-key';
         const data = {
             slug: slug,
@@ -305,13 +314,15 @@ class gdBackendClient {
         } catch (error) {
             this.logAxiosError(error);
         }
+
+        return true;
     }
 
-    public async saveEncryptedKeyForWorkspaceUsers(slug: string, base64Key: string) {
+    public async saveEncryptedKeyForWorkspaceUsers(slug: string, base64Key: string): Promise<boolean> {
 
         // Helper to encrypt keys
         const pems = await this.getWorkspaceKeys();
-        let encryptedKeys = [];
+        let encryptedKeys: any[] = [];
 
         for (const pem of pems) {
             const publicKey = forge.pki.publicKeyFromPem(pem);
@@ -332,9 +343,10 @@ class gdBackendClient {
             throw new Error('Unexpected response when saving encrypted keys.');
         }
 
+        return true;
     }
 
-    async getUploadOTT(workspaceId, entry) {
+    async getUploadOTT(workspaceId, entry): Promise<OTT|null> {
 
         try {
             await this.auth();
@@ -356,10 +368,10 @@ class gdBackendClient {
                 action: OTTAction.Upload,
                 token: response.data.user_token.token,
                 gateway: {
-                    sameIpUpload: response.data.gateway.same_ip_upload,
+                    same_ip_upload: response.data.gateway.same_ip_upload,
                     id: response.data.gateway.id,
-                    uploadChunkSize: response.data.gateway.upload_chunk_size,
-                    interimChunkSize: response.data.gateway.interim_chunk_size,
+                    upload_chunk_size: response.data.gateway.upload_chunk_size,
+                    interim_chunk_size: response.data.gateway.interim_chunk_size,
                     url: response.data.gateway.url,
                     type: response.data.gateway.type
                 },
@@ -371,6 +383,8 @@ class gdBackendClient {
         } catch (error) {
             this.logAxiosError(error);
         }
+
+        return null;
     }
 
     getThumbOtt = this.getUploadOTT;
@@ -380,6 +394,11 @@ class gdBackendClient {
         await this.setWS(workspaceId);
         destinationPath = destinationPath.replace(/^\/+|\/+$/g, '');
         try {
+            const entry = await this.getEntryDetails(workspaceId, destinationPath);
+            // console.log({entry});
+            if (entry && entry.type === EntryType.FOLDER ) {
+                return entry.slug;
+            }
             const response = await this.authorizedAxios.post(
                 this.backendUrl + "api/folders/folder",
                 {
@@ -391,7 +410,9 @@ class gdBackendClient {
             return response.data.data.slug;
         } catch (error) {
             this.logAxiosError(error);
+            throw error;
         }
+
     }
 
     public async listWorkspaces(): Promise<Workspace[]> {
@@ -414,24 +435,29 @@ class gdBackendClient {
             this.logAxiosError(error);
         }
 
+        return [];
     }
 
     async rm(workspaceId:string, filePath:string): Promise<boolean> {
 
         try {
-            let entry = await this.entryDetails(workspaceId, filePath);
+            let entry = await this.getEntryDetails(workspaceId, filePath);
 
-            const response = await this.authorizedAxios({
-                method: 'DELETE',
-                url: this.backendUrl + 'api/files/multiply/delete',
-                data: [entry.slug]
-            });
+            if (entry) {
+                const response = await this.authorizedAxios({
+                    method: 'DELETE',
+                    url: this.backendUrl + 'api/files/multiply/delete',
+                    data: [entry.slug]
+                });
 
-            return response.data.success;
+                return response.data.success;
+            }
 
         } catch (error) {
             this.logAxiosError(error);
         }
+
+        return false;
     }
 
     private logAxiosError(error) {
