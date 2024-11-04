@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {gdBackendClient} from './gdBackendClient.js';
 import {oAuthClient} from './oAuthClient.js';
 import {Command} from 'commander';
@@ -11,20 +10,24 @@ import {Wallet} from "ethers";
 import {Entry, EntryType} from "./types/Entry.js";
 import {gdGatewayClient} from "./gdGatewayClient.js";
 import {KeysAccess} from "./KeysAccess.js";
+import * as clientNeyra from 'client-neyra';
+import * as clientGd from 'client-gd';
 
 // import path = require("path");
 import * as path from 'path';
 
 config();
 
+/// @ts-ignore
 import { LocalFileStream, getUserRSAKeys } from 'gdgateway-client';
 
+/// @ts-ignore
 import prompt_sync from "prompt-sync";
 
 const prompt = prompt_sync({sigint: true});
 
 import * as ethers from "ethers";
-
+/// @ts-ignore
 import ProgressBar from "progress";
 
 config();
@@ -95,21 +98,54 @@ program
         }
     });
 
+
+const getClientGD = async () => {
+    const creds = await loadCreds();
+
+    clientNeyra.initializeApiClient({
+        baseURL: 'https://api.neyratech.com/api',
+        frontend: 'web',
+        frontendVersion: '1.0.0',
+    })
+
+    const wallet = ethers.Wallet.fromPhrase(creds.mnemonic);
+    const message = 'Welcome to Neyra Network. Your ID for this signature request is';
+    const signature = await wallet.signMessage(message);
+    const { data: { access_token } } = await clientNeyra.connectUser({ body: { 
+        signature,
+        provider: clientNeyra.AuthProvider.WalletConnect,
+        publicAddress: wallet.address as `0x${string}`
+    }});
+    
+    clientGd.initializeApiClient({
+        frontend: 'web',
+        frontendVersion: '1.0.0',
+        baseURL: `${process.env.BACKEND_ENDPOINT}/api`,
+        onRequest: async (config) => {
+            config.headers['X-Token'] = `Bearer ${access_token}`;
+            return config;
+        }
+    })
+    return clientGd
+}
+
 // Command to list all workspaces
 program
     .command('list-workspaces')
-    .option('--oAuthToken <token>', 'Redefines JWT token')
     .description('List all workspaces')
-    .action(async (options: any) => {
-
-        try {
-            const gdClient = await getGDBackendClient(options.oAuthToken);
-            let workspaces = await gdClient.listWorkspaces();
-            console.table(workspaces);
-
-        } catch (error) {
-            console.error(`Error listing workspaces: ${(error as Error).message}`);
-        }
+    .action(async () => {
+        const clientGD = await getClientGD()
+        const { data } = await clientGD.getUserWorkspaces()
+        console.table(
+            data.map((row: any) => {
+                return {
+                    id: row.workspace.id,
+                    name: row.workspace.name,
+                    slug: row.workspace.slug,
+                    role: row.role
+                };
+            })
+        );
     });
 
 program
@@ -140,8 +176,8 @@ program
             selectedWalletIndex = prompt('Select a wallet by entering its number: ');
 
             // Check if the user's input is a number and is within the range
-            if (!isNaN(selectedWalletIndex) && selectedWalletIndex >= 0 && selectedWalletIndex < wallets.length) {
-                wallet = wallets[selectedWalletIndex];
+            if (!isNaN(+selectedWalletIndex) && +selectedWalletIndex >= 0 && +selectedWalletIndex < wallets.length) {
+                wallet = wallets[+selectedWalletIndex];
                 console.log(`You selected the wallet at address ${wallet.address}`);
                 validSelection = true;
             } else {
@@ -197,10 +233,30 @@ program
 
 program
     .command('share-by-link <pathOrSlug>')
-    .option('--includeDecryptionKey', 'if set, decryption key will be included in the link')
-    .option('--oAuthToken <token>', 'Defines oAuth token')
-    .action(async (from:string, to: string, options: any) =>{
-        console.log('not implemented');
+    // .option('--includeDecryptionKey', 'if set, decryption key will be included in the link')
+    // .option('--oAuthToken <token>', 'Defines oAuth token')
+    .action(async (folderPath: string) =>{
+        try {
+            const { /* workspaceId,  */ filePath } = parseGDPath(folderPath);
+            // TODO handle workspaceId
+            const clientGD = await getClientGD()
+            const fileInfo = await clientGD.getFileInfo({
+                path: filePath
+            })
+            const slug = fileInfo.slug
+            await clientGD.shareFile({ slug, shareType: 1 })
+            console.log('File shared successfully');
+            // TODO remove hardcoded URL
+            console.log(
+                'Link: ',
+                `https://dev.ghostdrive.com/f/${slug}`
+            );
+            
+            
+            
+        } catch (error) {
+            console.error(`Error share file: ${(error as any).response.errors}`);
+        }
     });
 
 program
@@ -327,6 +383,7 @@ async function download(
         }
 
 
+        /// @ts-ignore
         const encryptedKey = detail.encryptedKey;
 
         fileKey = {
@@ -356,6 +413,7 @@ async function download(
     const readable = await gdGateway.downloadFile(
         entry,
         ott,
+        /// @ts-ignore
         function (progress) {
         if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
             tickedAtByte = progress.progress;
@@ -428,6 +486,7 @@ async function upload(
     let localFile: LocalFileStream = new LocalFileStream(
         stats.size,
         localPath,
+        /// @ts-ignore
         mime.getType(localPath),
         folderSlug,
         ott.token // @todo is it ok for uploadId?
@@ -441,6 +500,7 @@ async function upload(
     let uploadedEntry = await gdGateway.uploadFile(
         localFile,
         ott,
+        /// @ts-ignore
         function (progress) {
             if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
                 tickedAtByte = progress.progress;
@@ -487,72 +547,67 @@ program
         }
     });
 
-
 // Command to list all files in a workspace
 
 program
     .command('ls <folderPath>')
     .description('List all files in a workspace')
-    .option('--oAuthToken <token>', 'defines oAuthToken token')
-    .action(async (folderPath: string, options: any) => {
-
-        const {workspaceId, filePath} = parseGDPath(folderPath);
-        function displayTable(entries: Entry[]): void {
-            const nameWidth = Math.max(...entries.map(e => e.name.length), "File Name".length);
-            const sizeWidth = Math.max(...entries.map(e => e.size.length), "Size".length);
-
-            // Header
-            console.log(
-                `${"File Name".padEnd(nameWidth)} | ${"Size".padEnd(sizeWidth)}`
-            );
-            console.log("-".repeat(nameWidth + sizeWidth + 3));  // 3 is for " | " divider
-
-            // Rows
-            for (const entry of entries) {
-                console.log(
-                    `${entry.name.padEnd(nameWidth)} | ${entry.size.padEnd(sizeWidth)}`
-                );
-            }
-        }
+    // .option('--oAuthToken <token>', 'defines oAuthToken token')
+    .action(async (folderPath: string) => {
 
         try {
-            const gdClient = await getGDBackendClient(options.oAuthToken);
+            const { /* workspaceId,  */ filePath: dir } = parseGDPath(folderPath);
+            // TODO handle workspaceId
+            const clientGD = await getClientGD()
 
-            const generator = await gdClient.listFiles(workspaceId, filePath);
+            let dirSlug;
+            if (dir.length === 0 || dir === '.' || dir === '/') {
+                dirSlug = '';
+            } else {
+                const entry = await clientGD.getFileInfo({ path: dir })
+                if (entry.type !== EntryType.FOLDER) {
+                    throw new Error(`${dir} is not a folder`);
+                }
+                dirSlug = entry.slug;
+            }
+
+            let currentPageSize = 0;
+            let currentPage = 1;
             let keepGoing = true;
 
-            while (keepGoing) {
-                const chunk: any[] = [];
+            while (keepGoing) { 
+                const { data: files } = await clientGD.getFiles({
+                    page: currentPage,
+                    folderSlug: dirSlug
+                })
+                
+                const nameWidth = Math.max(...files.map(e => e.name.length), "File Name".length);
+                const sizeWidth = Math.max(...files.map(e => e.size.toString().length), "Size".length);
+                
+                // Header
+                console.log(
+                    `${"File Name".padEnd(nameWidth)} | ${"Size".padEnd(sizeWidth)}`
+                );
+                console.log("-".repeat(nameWidth + sizeWidth + 3));  // 3 is for " | " divider
 
-                for (let i = 0; i < 10; i++) {
-                    const result = await generator.next();
-                    // console.log(result);
-                    if (result.done) {
-                        keepGoing = false;
-                        break;
-                    }
-                    chunk.push(result.value);
+                // Rows
+                for (const file of files) {
+                    console.log(
+                        `${file.name.padEnd(nameWidth)} | ${file.size.toString().padEnd(sizeWidth)}`
+                    );
                 }
 
-                if (chunk.length === 0) {
-                    break;
-                }
-
-                console.clear();
-                console.log(folderPath);
-                displayTable(chunk);
-
-                if (chunk.length === 15) {
+                currentPageSize = files.length; 
+                if (files.length === 15) {
                     const answer = prompt('Next page? (y/n) ');
                     keepGoing = answer.toLowerCase() === 'y';
+                    currentPage++;
                 } else {
                     keepGoing = false;
                 }
-
             }
-
         } catch (error) {
-            console.error(`Error listing files: ${(error as Error).message}`);
+            console.error(`Error listing files: ${(error as any).response.errors}`);
         }
     });
 
@@ -562,20 +617,21 @@ program
 
 program
     .command('rm <folderPath>')
-    .option('--oAuthToken <token>', 'defines oAuthToken token')
+    // .option('--oAuthToken <token>', 'defines oAuthToken token')
     .description('Delete a file from a workspace')
-    .action(async (folderPath: string, options: any) => {
+    .action(async (folderPath: string) => {
         try {
-            const {workspaceId, filePath} = parseGDPath(folderPath);
-
-            const gdClient = await getGDBackendClient(options.oAuthToken);
-
-            await gdClient.rm(workspaceId, filePath);
-
-            console.log(`${filePath} successfully deleted from ${workspaceId}`);
-
+            const { /* workspaceId,  */ filePath } = parseGDPath(folderPath);
+            // TODO handle workspaceId
+            const clientGD = await getClientGD()
+            const fileInfo = await clientGD.getFileInfo({
+                path: filePath
+            })
+            const slug = fileInfo.slug
+            const deleteFile = await clientGD.deleteMultipleFiles({ slugs: [slug] })
+            console.log(deleteFile.message)
         } catch (error) {
-            console.error(`Error deleting file: ${(error as Error).message}`);
+            console.error(`Error deleting file: ${(error as any).response.errors}`);
         }
     });
 

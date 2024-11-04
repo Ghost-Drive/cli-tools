@@ -88,7 +88,7 @@ class gdBackendClient {
 
 
     async auth() {
-        let authHeaders = {};
+        let authHeaders: any = {};
         if (this.accessToken != undefined) {
             authHeaders['Authorization'] = 'Bearer ' + this.accessToken;
         }
@@ -248,7 +248,7 @@ class gdBackendClient {
                 clientsideKey: null
             };
 
-        } catch (error) {
+        } catch (error: any) {
             if(error.response.status !== 404) {
                 this.logAxiosError(error);
             }
@@ -346,7 +346,7 @@ class gdBackendClient {
         return true;
     }
 
-    async getUploadOTT(workspaceId, entry): Promise<OTT|null> {
+    async getUploadOTT(workspaceId: any, entry: any): Promise<OTT|null> {
 
         try {
             await this.auth();
@@ -389,7 +389,7 @@ class gdBackendClient {
 
     getThumbOtt = this.getUploadOTT;
 
-    async getFolderSlug(workspaceId, destinationPath): Promise<string> {
+    async getFolderSlug(workspaceId: any, destinationPath: any): Promise<string> {
         await this.auth();
         await this.setWS(workspaceId);
         destinationPath = destinationPath.replace(/^\/+|\/+$/g, '');
@@ -460,7 +460,7 @@ class gdBackendClient {
         return false;
     }
 
-    private logAxiosError(error) {
+    private logAxiosError(error: any) {
         // const errors = error?.response?.data?.errors ?? [error.message];
         const errors = error?.response?.data ?? [error.message];
         console.error(errors);

@@ -1,4 +1,4 @@
-import { GatewayType} from "gdgateway-client";
+import { GatewayType } from "gdgateway-client";
 
 export enum OTTAction {
     Delete,
@@ -15,15 +15,6 @@ export interface OTT {
     isOnStorageProvider: IsOnStorageProvider;
     token: string;
     uploadChunkSize: UploadChunkSize;
-}
-
-interface Gateway {
-    id: number;
-    url: string;
-    uploadChunkSize: number;
-    type: string;
-    sameIpUpload: false;
-    interimChunkSize: number;
 }
 
 interface StorageProviders {

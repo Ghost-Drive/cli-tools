@@ -46,7 +46,7 @@ class oAuthClient {
         }
     }
 
-    private logAxiosError(error) {
+    private logAxiosError(error: any) {
         // const errors = error?.response?.data?.errors ?? [error.message];
         const errors = error?.response?.data ?? [error.message];
         console.error(errors);
