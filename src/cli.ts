@@ -2,21 +2,18 @@ import {gdBackendClient} from './gdBackendClient.js';
 import {oAuthClient} from './oAuthClient.js';
 import {Command} from 'commander';
 import {config} from 'dotenv';
-import {AuthConfig} from "./types/AuthConfig.js";
 import mime from 'mime';
 import forge from "node-forge";
 import fs from 'fs';
 import {Wallet} from "ethers";
-import {Entry, EntryType} from "./types/Entry.js";
+import {EntryType} from "./types/Entry.js";
 import {gdGatewayClient} from "./gdGatewayClient.js";
 import {KeysAccess} from "./KeysAccess.js";
-import * as clientNeyra from 'client-neyra';
-import * as clientGd from 'client-gd';
+import { clientGD, initClientGD } from './clientGD';
+import { loadCreds } from './utils';
 
 // import path = require("path");
 import * as path from 'path';
-
-config();
 
 /// @ts-ignore
 import { LocalFileStream, getUserRSAKeys } from 'gdgateway-client';
@@ -32,8 +29,16 @@ import ProgressBar from "progress";
 
 config();
 
-if (!process.env.BACKEND_ENDPOINT) {
-    throw new Error('Missing environment variable: BACKEND_ENDPOINT');
+if (!process.env.GD_ENDPOINT) {
+    throw new Error('Missing environment variable: GD_ENDPOINT');
+}
+
+if (!process.env.NEYRA_ENDPOINT) {
+    throw new Error('Missing environment variable: NEYRA_ENDPOINT');
+}
+
+if (!process.env.SHARE_ENDPOINT) {
+    throw new Error('Missing environment variable: SHARE_ENDPOINT');
 }
 
 
@@ -43,19 +48,15 @@ const program = new Command();
 
 // Setup CLI commands
 
-async function loadCreds(): Promise<AuthConfig> {
-    let rawData = fs.readFileSync('.data/auth.json', 'utf-8');
-    let config: AuthConfig = JSON.parse(rawData);
-    return config;
-}
+
 
 async function getGDBackendClient(accessToken: string|undefined): Promise<gdBackendClient> {
     const creds = await loadCreds();
-    if (!process.env.BACKEND_ENDPOINT) {
-        throw new Error('No BACKEND_ENDPOINT');
+    if (!process.env.GD_ENDPOINT) {
+        throw new Error('No GD_ENDPOINT');
     }
     return new gdBackendClient(
-        process.env.BACKEND_ENDPOINT,
+        process.env.GD_ENDPOINT,
         creds.accessKey,
         creds.accessSecret,
         creds.jwt,
@@ -69,7 +70,7 @@ program
     .option('--oAuthToken <token>', 'Redefines JWT token')
     .description('Create a new workspace')
     .action(async (name: string, options: any) => {
-        console.log('af');
+
         if (!options.oAuthToken) {
             console.error('Error: --oAuthToken option is required as this command is only for oAuth usage');
             process.exit(1); // Exit with error code
@@ -99,42 +100,12 @@ program
     });
 
 
-const getClientGD = async () => {
-    const creds = await loadCreds();
-
-    clientNeyra.initializeApiClient({
-        baseURL: 'https://api.neyratech.com/api',
-        frontend: 'web',
-        frontendVersion: '1.0.0',
-    })
-
-    const wallet = ethers.Wallet.fromPhrase(creds.mnemonic);
-    const message = 'Welcome to Neyra Network. Your ID for this signature request is';
-    const signature = await wallet.signMessage(message);
-    const { data: { access_token } } = await clientNeyra.connectUser({ body: { 
-        signature,
-        provider: clientNeyra.AuthProvider.WalletConnect,
-        publicAddress: wallet.address as `0x${string}`
-    }});
-    
-    clientGd.initializeApiClient({
-        frontend: 'web',
-        frontendVersion: '1.0.0',
-        baseURL: `${process.env.BACKEND_ENDPOINT}/api`,
-        onRequest: async (config) => {
-            config.headers['X-Token'] = `Bearer ${access_token}`;
-            return config;
-        }
-    })
-    return clientGd
-}
-
 // Command to list all workspaces
 program
     .command('list-workspaces')
     .description('List all workspaces')
     .action(async () => {
-        const clientGD = await getClientGD()
+        await initClientGD()
         const { data } = await clientGD.getUserWorkspaces()
         console.table(
             data.map((row: any) => {
@@ -205,11 +176,11 @@ program
             jsonObject.clientSecret = clientSecret;
 
             console.log(`Exporting ${wallet.address} public key to GhostDrive servers...`);
-            if (!process.env.BACKEND_ENDPOINT) {
-                throw new Error('No BACKEND_ENDPOINT');
+            if (!process.env.GD_ENDPOINT) {
+                throw new Error('No GD_ENDPOINT');
             }
             const oAuth = new oAuthClient(
-                process.env.BACKEND_ENDPOINT,
+                process.env.GD_ENDPOINT,
                 jsonObject.clientId,
                 jsonObject.clientSecret
             );
@@ -237,22 +208,18 @@ program
     // .option('--oAuthToken <token>', 'Defines oAuth token')
     .action(async (folderPath: string) =>{
         try {
-            const { /* workspaceId,  */ filePath } = parseGDPath(folderPath);
-            // TODO handle workspaceId
-            const clientGD = await getClientGD()
+            const { workspaceId, filePath } = parseGDPath(folderPath);
+            await initClientGD({ workspaceId: Number(workspaceId) })
             const fileInfo = await clientGD.getFileInfo({
                 path: filePath
             })
             const slug = fileInfo.slug
             await clientGD.shareFile({ slug, shareType: 1 })
             console.log('File shared successfully');
-            // TODO remove hardcoded URL
             console.log(
                 'Link: ',
-                `https://dev.ghostdrive.com/f/${slug}`
+                `${process.env.SHARE_ENDPOINT}/${slug}`,
             );
-            
-            
             
         } catch (error) {
             console.error(`Error share file: ${(error as any).response.errors}`);
@@ -556,9 +523,9 @@ program
     .action(async (folderPath: string) => {
 
         try {
-            const { /* workspaceId,  */ filePath: dir } = parseGDPath(folderPath);
-            // TODO handle workspaceId
-            const clientGD = await getClientGD()
+            const { workspaceId, filePath: dir } = parseGDPath(folderPath);
+
+            await initClientGD({ workspaceId: Number(workspaceId) })
 
             let dirSlug;
             if (dir.length === 0 || dir === '.' || dir === '/') {
@@ -607,7 +574,7 @@ program
                 }
             }
         } catch (error) {
-            console.error(`Error listing files: ${(error as any).response.errors}`);
+            console.error(`Error listing files: ${(error as any)}`);
         }
     });
 
@@ -621,9 +588,8 @@ program
     .description('Delete a file from a workspace')
     .action(async (folderPath: string) => {
         try {
-            const { /* workspaceId,  */ filePath } = parseGDPath(folderPath);
-            // TODO handle workspaceId
-            const clientGD = await getClientGD()
+            const { workspaceId, filePath } = parseGDPath(folderPath);
+            await initClientGD({ workspaceId: Number(workspaceId) })
             const fileInfo = await clientGD.getFileInfo({
                 path: filePath
             })
