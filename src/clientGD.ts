@@ -1,9 +1,12 @@
 import * as clientNeyra from 'client-neyra';
 import * as clientGD from 'client-gd';
 import { ethers } from 'ethers';
-import { loadCreds } from './utils';
+import { getAuthConfig } from './utils';
+import {config} from 'dotenv';
 
 export { clientGD };
+
+config();
 
 
 type InitClientGDOptions = {
@@ -11,18 +14,46 @@ type InitClientGDOptions = {
     accessToken?: string;
 }
 
+const defaultConfig: clientGD.AxiosInstanceConfig = {
+    frontend: 'web',
+    frontendVersion: '1.0.0',
+    baseURL: `${process.env.GD_ENDPOINT}/api`,
+}
+
 export const initClientGD = async ({ workspaceId, accessToken }: InitClientGDOptions = {}) => {
+    
+    if (accessToken) {
+        clientGD.initializeApiClient({
+            ...defaultConfig,
+            headers: {
+                'X-Token': `Bearer ${accessToken}`
+            }
+        })
+    }
 
-    if (!accessToken) {
+    const authConfig = await getAuthConfig();
 
+    if (authConfig.authType === '2') {
+        throw new Error('Access token is required for OAuth authentication');
+    }
+
+    if (authConfig.authType === '1') {
+        clientGD.initializeApiClient(defaultConfig)
+        await clientGD.authorizeUser({
+            accessKey: authConfig.accessKey,
+            accessSecret: authConfig.accessSecret
+        });
+        return;
+    }
+
+    if (authConfig.authType === '3') {
         clientNeyra.initializeApiClient({
             baseURL: `${process.env.NEYRA_ENDPOINT}/api`,
             frontend: 'web',
             frontendVersion: '1.0.0',
         })
       
-        const creds = await loadCreds();
-        const wallet = ethers.Wallet.fromPhrase(creds.mnemonic);
+        const wallet = ethers.Wallet.fromPhrase(authConfig.mnemonic);
         const message = 'Welcome to Neyra Network. Your ID for this signature request is';
         const signature = await wallet.signMessage(message);
         const { data: { access_token } } = await clientNeyra.connectUser({ body: { 
@@ -30,17 +61,14 @@ export const initClientGD = async ({ workspaceId, accessToken }: InitClientGDOpt
             provider: clientNeyra.AuthProvider.WalletConnect,
             publicAddress: wallet.address as `0x${string}`
         }});
-        accessToken = access_token;
+    
+        clientGD.initializeApiClient({
+            ...defaultConfig,
+            headers: {
+                'X-Token': `Bearer ${access_token}`
+            }
+        })
     }
-
-    clientGD.initializeApiClient({
-        frontend: 'web',
-        frontendVersion: '1.0.0',
-        baseURL: `${process.env.GD_ENDPOINT}/api`,
-        headers: {
-            'X-Token': `Bearer ${accessToken}`
-        }
-    })
 
     if (workspaceId) {
         await clientGD.switchWorkspace({ 

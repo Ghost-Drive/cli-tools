@@ -7,7 +7,7 @@ import {Wallet} from "ethers";
 import {EntryType} from "./types/Entry.js";
 import {KeysAccess} from "./KeysAccess.js";
 import { clientGD, initClientGD } from './clientGD';
-import { download, loadCreds, upload } from './utils';
+import { download, getAuthConfig, upload } from './utils';
 import { getUserRSAKeys } from 'client-gateway';
 import prompt_sync from "prompt-sync";
 import * as ethers from "ethers";
@@ -15,7 +15,6 @@ import * as ethers from "ethers";
 config();
 
 const prompt = prompt_sync({sigint: true});
-
 
 if (!process.env.GD_ENDPOINT) {
     throw new Error('Missing environment variable: GD_ENDPOINT');
@@ -67,7 +66,7 @@ program
 program
     .command('configure')
     .action(async() => {
-        const configType = prompt('Configure for (1) Own Account or (2) OAuth Client? Enter 1 or 2: ');
+        const authType = prompt('Configure: (1) Own Account, (2) OAuth Client or (3) Mnemonic only? Enter 1, 2 or 3: ');
 
         let mnemonic = '';
         while (!ethers.Mnemonic.isValidMnemonic(mnemonic)) {
@@ -101,24 +100,24 @@ program
             }
         }
 
-        let jsonObject: any = {
-            configType: configType,
+        let authConfig: any = {
+            authType: authType,
             mnemonic: mnemonic,
             selectedWalletIndex: selectedWalletIndex
         };
 
-        if (configType === '1') {  // Own Account
+        if (authType === '1') {  // Own Account
             const accessKey = prompt('GD Access Key ID: ').trim();
             const accessSecret = prompt('GD Secret Access Key: ').trim();
 
-            jsonObject.accessKey = accessKey;
-            jsonObject.accessSecret = accessSecret;
-        } else if (configType === '2') {  // OAuth Client
+            authConfig.accessKey = accessKey;
+            authConfig.accessSecret = accessSecret;
+        } else if (authType === '2') {  // OAuth Client
             const clientId = prompt('OAuth Client ID: ');
             const clientSecret = prompt('OAuth Client Secret: ');
 
-            jsonObject.clientId = clientId;
-            jsonObject.clientSecret = clientSecret;
+            authConfig.clientId = clientId;
+            authConfig.clientSecret = clientSecret;
 
             console.log(`Exporting ${wallet.address} public key to GhostDrive servers...`);
             if (!process.env.GD_ENDPOINT) {
@@ -126,8 +125,8 @@ program
             }
             const oAuth = new oAuthClient(
                 process.env.GD_ENDPOINT,
-                jsonObject.clientId,
-                jsonObject.clientSecret
+                authConfig.clientId,
+                authConfig.clientSecret
             );
 
             const pair = await getUserRSAKeys({signer: wallet});
@@ -137,10 +136,10 @@ program
             console.log('Use `--access-token` param to pass authentication token to any command.');
         }
 
-        // Convert jsonObject to a string and write to a file
-        let jsonString = JSON.stringify(jsonObject, null, 2);
+        // Convert authConfig to a string and write to a file
+        const authConfigRaw = JSON.stringify(authConfig, null, 2);
         try {
-            fs.writeFileSync('.data/auth.json', jsonString);
+            fs.writeFileSync('.data/auth.json', authConfigRaw);
             console.log('.data/auth.json has been written successfully');
         } catch (err) {
             console.log('Error writing file', err);
@@ -239,8 +238,8 @@ program
     .description('Wallets')
     .action(async (workspace: string) => {
         try {
-            let creds = await loadCreds();
-            let keys = await KeysAccess.create(creds.mnemonic, 100);
+            let authConfig = await getAuthConfig();
+            let keys = await KeysAccess.create(authConfig.mnemonic, 100);
             console.log(keys.getAddresses());
         } catch (error) {
             console.error(`Error listing files: ${(error as Error).message}`);

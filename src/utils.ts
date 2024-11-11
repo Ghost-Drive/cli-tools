@@ -11,7 +11,7 @@ import mime from 'mime';
 import { Crypto } from "@peculiar/webcrypto";
 import * as Base64 from 'base64-js';
 
-export async function loadCreds(): Promise<AuthConfig> {
+export async function getAuthConfig(): Promise<AuthConfig> {
     let rawData = fs.readFileSync('.data/auth.json', 'utf-8');
     let config: AuthConfig = JSON.parse(rawData);
     return config;
@@ -74,8 +74,11 @@ export async function download(
 
     if (entry.isClientsideEncrypted && !decryptionKey) {
         const encryptedFileDetails = await clientGD.getEncryptedFileDetails({ slug: entry.slug });
-        const creds = await loadCreds();
-        const keys = await KeysAccess.create(creds.mnemonic, 100);
+        const { mnemonic } = await getAuthConfig();
+        if (!mnemonic) {
+            throw new Error('Seed phrase is required to decode this file');
+        }
+        const keys = await KeysAccess.create(mnemonic, 100);
         for (const details of encryptedFileDetails.data) {
             let wallet = keys.getWalletByAddress(details.user_public_address.public_address);
             if (wallet !== undefined) {
