@@ -188,7 +188,6 @@ export async function upload(
         ott.jwt_ott[0] // @todo is it ok for uploadId?
     );
 
-    // const { slug, clientsideKey } = await handleUploadFile(localFile, ott);
     const crypto = new Crypto();
     const key = await crypto.subtle.generateKey(
         { name: 'AES-GCM', length: 256 },

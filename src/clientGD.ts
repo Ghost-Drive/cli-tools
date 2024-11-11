@@ -14,7 +14,7 @@ type InitClientGDOptions = {
     accessToken?: string;
 }
 
-const defaultConfig: clientGD.AxiosInstanceConfig = {
+export const defaultConfig: clientGD.AxiosInstanceConfig = {
     frontend: 'web',
     frontendVersion: '1.0.0',
     baseURL: `${process.env.GD_ENDPOINT}/api`,

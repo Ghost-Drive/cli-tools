@@ -1,4 +1,3 @@
-import {oAuthClient} from './oAuthClient.js';
 import {Command} from 'commander';
 import {config} from 'dotenv';
 import forge from "node-forge";
@@ -6,7 +5,7 @@ import fs from 'fs';
 import {Wallet} from "ethers";
 import {EntryType} from "./types/Entry.js";
 import {KeysAccess} from "./KeysAccess.js";
-import { clientGD, initClientGD } from './clientGD';
+import { clientGD, initClientGD, defaultConfig as clientGDDefaultConfig } from './clientGD';
 import { download, getAuthConfig, upload } from './utils';
 import { getUserRSAKeys } from 'client-gateway';
 import prompt_sync from "prompt-sync";
@@ -123,15 +122,17 @@ program
             if (!process.env.GD_ENDPOINT) {
                 throw new Error('No GD_ENDPOINT');
             }
-            const oAuth = new oAuthClient(
-                process.env.GD_ENDPOINT,
-                authConfig.clientId,
-                authConfig.clientSecret
-            );
 
             const pair = await getUserRSAKeys({signer: wallet});
-            const pubKeyPem = forge.pki.publicKeyToPem(pair.publicKey);
-            await oAuth.exportKey(wallet.address, pubKeyPem);
+            const publicKey = forge.pki.publicKeyToPem(pair.publicKey);
+
+            clientGD.initializeApiClient(clientGDDefaultConfig)
+            await clientGD.saveGoogle2faKey({
+                publicAddress: wallet.address,
+                publicKey,
+                clientId: clientId,
+                clientSecret: clientSecret
+            })
 
             console.log('Use `--access-token` param to pass authentication token to any command.');
         }
@@ -236,7 +237,7 @@ function parseGDPath(url: string) {
 program
     .command('wallet')
     .description('Wallets')
-    .action(async (workspace: string) => {
+    .action(async () => {
         try {
             let authConfig = await getAuthConfig();
             let keys = await KeysAccess.create(authConfig.mnemonic, 100);
@@ -336,44 +337,5 @@ program
             console.error(`Error deleting file: ${(error as any).response.errors}`);
         }
     });
-
-/*
-
-//
-// program
-//     .command('s3server')
-//     .option('-p, --port <number>', 'port number')
-//     .option('-b, --bind <string>', 'ip address')
-//     .description('runs s3-alike server locally')
-//     .action(async () => {
-//         // check if seed phrase and wallet index all set
-//         // init get authMiddleware
-//
-//         const storeInstance = new GDStore(
-//             'key', 'key'
-//         ); // todo these values should come from request headers from authMiddleware (in worst case from config)
-//
-//         // @ts-ignore
-//         const serverInst = new S3rver({
-//             port: 8080,
-//             address: '0.0.0.0',
-//             silent: false,
-//             store: storeInstance
-//         });
-//
-//         // await serverInst.run();
-//         // console.log(serverInst.run);
-//
-//         serverInst.run((err: any) => {
-//             if (err) {
-//                 console.error(err);
-//             } else {
-//                 console.log('now listening at address %s and port %d', serverInst);
-//             }
-//         });
-//
-//     });
-
-*/
 
 program.parse(process.argv);
