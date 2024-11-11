@@ -1,14 +1,5 @@
-import {GDStorage} from './types/GDStorage';
-import {Workspace} from './types/Workspace';
-import {Entry, EntryType} from "./types/Entry";
-import {EntryEncryptedDetails} from "./types/EntryEncryptedDetails";
-import {OTT, OTTAction} from "./types/OTT";
-import * as forge from "node-forge";
-
-
 // @ts-ignore
-import axios, {AxiosInstance} from 'axios';
-
+import axios from 'axios';
 
 class oAuthClient {
 

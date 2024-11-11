@@ -1,33 +1,21 @@
-import {gdBackendClient} from './gdBackendClient.js';
 import {oAuthClient} from './oAuthClient.js';
 import {Command} from 'commander';
 import {config} from 'dotenv';
-import mime from 'mime';
 import forge from "node-forge";
 import fs from 'fs';
 import {Wallet} from "ethers";
 import {EntryType} from "./types/Entry.js";
-import {gdGatewayClient} from "./gdGatewayClient.js";
 import {KeysAccess} from "./KeysAccess.js";
 import { clientGD, initClientGD } from './clientGD';
-import { loadCreds } from './utils';
-
-// import path = require("path");
-import * as path from 'path';
-
-/// @ts-ignore
-import { LocalFileStream, getUserRSAKeys } from 'gdgateway-client';
-
-/// @ts-ignore
+import { download, loadCreds, upload } from './utils';
+import { getUserRSAKeys } from 'client-gateway';
 import prompt_sync from "prompt-sync";
+import * as ethers from "ethers";
+
+config();
 
 const prompt = prompt_sync({sigint: true});
 
-import * as ethers from "ethers";
-/// @ts-ignore
-import ProgressBar from "progress";
-
-config();
 
 if (!process.env.GD_ENDPOINT) {
     throw new Error('Missing environment variable: GD_ENDPOINT');
@@ -45,67 +33,24 @@ if (!process.env.SHARE_ENDPOINT) {
 // Initialize CLI
 const program = new Command();
 
-
-// Setup CLI commands
-
-
-
-async function getGDBackendClient(accessToken: string|undefined): Promise<gdBackendClient> {
-    const creds = await loadCreds();
-    if (!process.env.GD_ENDPOINT) {
-        throw new Error('No GD_ENDPOINT');
-    }
-    return new gdBackendClient(
-        process.env.GD_ENDPOINT,
-        creds.accessKey,
-        creds.accessSecret,
-        creds.jwt,
-        accessToken
-    );
-}
-
 // Command to create a workspace
 program
     .command('create-workspace <name>')
-    .option('--oAuthToken <token>', 'Redefines JWT token')
+    .option('--access-token <token>', 'access token')
     .description('Create a new workspace')
-    .action(async (name: string, options: any) => {
-
-        if (!options.oAuthToken) {
-            console.error('Error: --oAuthToken option is required as this command is only for oAuth usage');
-            process.exit(1); // Exit with error code
-        }
-
-        try {
-            const gdClient = await getGDBackendClient(options.oAuthToken);
-            const wsDetails = await gdClient.createWorkspace(name);
-            console.log('done', wsDetails);
-
-        } catch (error: any) {
-            console.error(`Error creating workspace: ${(error as Error).message}`);
-        }
+    .action(async (name: string, { accessToken }: { accessToken?: string }) => {
+        await initClientGD({ accessToken })
+        const { id } = await clientGD.createWorkspace({ name })
+        console.log('Workspace created successfully, id:', id);
     });
-
-// Command to delete a workspace
-program
-    .command('delete-workspace <id>')
-    .option('--oAuthToken <token>', 'Redefines JWT token')
-    .description('Delete a workspace')
-    .action(async (name: string, options: any) => {
-        try {
-            console.error('Not implemented');
-        } catch (error) {
-            console.error(`Error deleting workspace: ${(error as Error).message}`);
-        }
-    });
-
 
 // Command to list all workspaces
 program
     .command('list-workspaces')
+    .option('--access-token <token>', 'access token')
     .description('List all workspaces')
-    .action(async () => {
-        await initClientGD()
+    .action(async ({ accessToken }: { accessToken?: string }) => {
+        await initClientGD({ accessToken })
         const { data } = await clientGD.getUserWorkspaces()
         console.table(
             data.map((row: any) => {
@@ -189,7 +134,7 @@ program
             const pubKeyPem = forge.pki.publicKeyToPem(pair.publicKey);
             await oAuth.exportKey(wallet.address, pubKeyPem);
 
-            console.log('Use `--oAuthToken` param to pass authentication token to any command.');
+            console.log('Use `--access-token` param to pass authentication token to any command.');
         }
 
         // Convert jsonObject to a string and write to a file
@@ -205,11 +150,14 @@ program
 program
     .command('share-by-link <pathOrSlug>')
     // .option('--includeDecryptionKey', 'if set, decryption key will be included in the link')
-    // .option('--oAuthToken <token>', 'Defines oAuth token')
-    .action(async (folderPath: string) =>{
+    .option('--access-token <token>', 'access token')
+    .action(async (folderPath: string, { accessToken }: { accessToken?: string }) => {
         try {
             const { workspaceId, filePath } = parseGDPath(folderPath);
-            await initClientGD({ workspaceId: Number(workspaceId) })
+            await initClientGD({ 
+                workspaceId: Number(workspaceId),
+                accessToken
+            })
             const fileInfo = await clientGD.getFileInfo({
                 path: filePath
             })
@@ -228,38 +176,44 @@ program
 
 program
     .command('cp <from> <to>')
-    .option('--oAuthToken <token>', 'Defines oAuth token')
-    .option('--manageKey', 'Stores file decryption key to GD')
+    .option('--access-token <token>', 'access token')
+    .option('--decryption-key <key>', 'Decryption key')
     .description('Download or upload the file')
-    .action(async (from: string, to: string, options: any) => {
+    .action(async (from: string, to: string, { accessToken, decryptionKey }: { accessToken?: string, decryptionKey?: string }) => {
 
-        const gdClient = await getGDBackendClient(options.oAuthToken);
         const prefix = 'gd://';
 
-        const progressBar = new ProgressBar('[:bar] :percent :etas', { total: 100 });
+        const isDownload = from.startsWith(prefix);
+        const isUpload = to.startsWith(prefix);
 
-        const abortController = new AbortController();
-
-        process.on('SIGINT', () => {
-            abortController.abort();
-        });
-
-        if (from.startsWith(prefix) && to.startsWith(prefix)) {
-            throw new Error('Both "from" and "to" cannot start with "gd://"');
-        } else if (!from.startsWith(prefix) && !to.startsWith(prefix)) {
+        if (isDownload && isUpload) {
+            throw new Error('Both "from" and "to" should not start with "gd://"');
+        } else if (!isDownload && !isUpload) {
             throw new Error('Either "from" or "to" should start with "gd://"');
-        } else if (from.startsWith(prefix)) {
-            let { workspaceId, filePath } = parseGDPath(from);
-            await download(workspaceId, filePath, to, progressBar.tick.bind(progressBar), abortController.signal, gdClient);
+        } else if (isDownload) {
+            const { workspaceId, filePath } = parseGDPath(from);
+            await initClientGD({ 
+                workspaceId: Number(workspaceId),
+                accessToken
+            })
+            await download(
+                filePath,
+                to,
+                decryptionKey
+            );
             console.log('Successfully downloaded');
 
-        } else if (to.startsWith(prefix)) {
+        } else if (isUpload) {
             let { workspaceId, filePath } = parseGDPath(to);
-            await upload(
-                from, workspaceId, filePath, progressBar.tick.bind(progressBar),
-                abortController.signal, gdClient, options.manageKey
+            await initClientGD({ 
+                workspaceId: Number(workspaceId),
+                accessToken
+            })
+            const { clientsideKey } = await upload(
+                from,
+                filePath
             );
-            console.log('Successfully uploaded');
+            console.log(`Successfully uploaded, decryption key: ${clientsideKey}`);
         }
 
     });
@@ -279,227 +233,6 @@ function parseGDPath(url: string) {
     return { workspaceId, filePath };
 }
 
-async function download(
-    workspaceId: string,
-    filePath: string,
-    localPath:string,
-    progressTick: () => void, signal: AbortSignal,
-    gdClient: gdBackendClient
-) {
-
-    // Check if the path exists
-    const pathName = path.dirname(localPath);
-
-    if (!fs.existsSync(pathName)) {
-        // Path does not exist, create directory
-        fs.mkdirSync(pathName, { recursive: true });
-    }
-
-    let entry = await gdClient.getEntryDetails(workspaceId, filePath);
-    if (entry === undefined) {
-        throw new Error('Unable to fetch file details');
-    }
-    if (fs.existsSync(localPath)) {
-        const stats = fs.lstatSync(localPath);
-
-        if (stats.isFile()) {
-            console.error('The file already exists');
-            process.exit(1);
-        }
-
-        if(stats.isDirectory()) {
-            localPath = localPath.replace(/\/+$/, '') + `/${entry.name}`;
-        }
-    }
-
-
-    if(entry.type !== EntryType.FILE) {
-        throw new Error('Only single file can be downloaded in this version');
-    }
-
-    const encryptionDetails = entry.isClientsideEncrypted ?
-        await gdClient.entryEncryptedDetails(entry) :
-        [];
-
-
-    if (entry.isClientsideEncrypted && encryptionDetails.length === 0) {
-        throw new Error('No encrypted keys for this file stored on server');
-    }
-
-
-    let fileKey: any = null;
-
-    const creds = await loadCreds();
-    if (entry.isClientsideEncrypted) {
-        // decode file key
-        const keys = await KeysAccess.create(creds.mnemonic, 100);
-
-        let pair, detail;
-        for (let i= 0; i < encryptionDetails.length; i++) {
-            detail = encryptionDetails[i];
-            let wallet = keys.getWalletByAddress(detail.userAddress);
-            if (wallet !== undefined) {
-                // get private key
-                pair = await getUserRSAKeys({signer: wallet});
-                break;
-            }
-        }
-
-        if (!pair) {
-            throw new Error('Your seed phrase does not have proper wallet to decode this file');
-        }
-
-
-        /// @ts-ignore
-        const encryptedKey = detail.encryptedKey;
-
-        fileKey = {
-            key: await pair.privateKey.decrypt(encryptedKey),
-            iv: entry.iv,
-            clientsideKeySha3Hash: entry.sha3Hash
-        };
-    }
-
-    //
-    const ott = await gdClient.getDownloadOtt(workspaceId, entry);
-
-    if (!ott) {
-        throw new Error('Unable to get download OTT');
-    }
-    let cidData;
-    if (ott.isOnStorageProvider[entry.slug]) {
-        cidData = await gdClient.getFileCids(entry.slug);
-    }
-
-    const gdGateway = new gdGatewayClient();
-
-    const tickBytesRange = Number(entry.size) / 100;
-    const ticksPerTick = 104857600 / Number(entry.size);
-    let tickedAtByte = 0;
-
-    const readable = await gdGateway.downloadFile(
-        entry,
-        ott,
-        /// @ts-ignore
-        function (progress) {
-        if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
-            tickedAtByte = progress.progress;
-
-            for (let i = 0; i < ticksPerTick; i++ ) {
-                progressTick();
-            }
-        }
-    },
-        signal,
-        fileKey,
-        cidData
-    );
-
-    const writable = fs.createWriteStream(localPath);
-
-    readable.pipe(writable);
-
-    writable.on('finish', () => {
-        console.log('File has been written');
-    });
-
-    writable.on('error', (error) => {
-        console.error('Error writing file:', error);
-    });
-}
-
-async function upload(
-    localPath:string,
-    workspaceId: string,
-    destinationPath: string,
-    progressTick: () => void,
-    signal: AbortSignal,
-    gdClient: gdBackendClient,
-    manageKey: boolean
-)  {
-    let stats;
-    if (fs.existsSync(localPath)) {
-        stats = fs.lstatSync(localPath);
-
-        if(stats.isDirectory()) {
-            console.error('We can\'t upload a directory');
-            process.exit(1);
-        }
-
-        if (!stats.isFile()) {
-            console.error('Upload should be a file');
-            process.exit(1);
-        }
-    } else {
-        console.error('File not found');
-        process.exit(1);
-    }
-
-    const ott = await gdClient.getUploadOTT(workspaceId, {
-        size: stats.size,
-        name: path.basename(localPath)
-    });
-    if (!ott) {
-        throw new Error('Unable to fetch OTT');
-    }
-
-    // get folder id
-
-    let folderSlug = '';
-    if (destinationPath !== '.' && destinationPath !== '/') {
-        folderSlug = await gdClient.getFolderSlug(workspaceId, destinationPath);
-    }
-
-    let localFile: LocalFileStream = new LocalFileStream(
-        stats.size,
-        localPath,
-        /// @ts-ignore
-        mime.getType(localPath),
-        folderSlug,
-        ott.token // @todo is it ok for uploadId?
-    );
-    const gdGateway = new gdGatewayClient();
-
-    const tickBytesRange = stats.size / 100;
-    const ticksPerTick = 104857600 / stats.size;
-    let tickedAtByte = 0;
-
-    let uploadedEntry = await gdGateway.uploadFile(
-        localFile,
-        ott,
-        /// @ts-ignore
-        function (progress) {
-            if ( (progress.progress - tickedAtByte) >= tickBytesRange) {
-                tickedAtByte = progress.progress;
-
-                for (let i = 0; i < ticksPerTick; i++ ) {
-                    progressTick();
-                }
-            }
-        },
-        signal
-    );
-
-    let processes = [];
-    // if (false) {
-    //     processes.push(gdGateway.saveThumb(
-    //         localFile,
-    //         ott,
-    //         uploadedEntry.slug
-    //     ));
-    // }
-
-    if (uploadedEntry.clientsideKey) {
-        processes.push(gdClient.saveEncryptedKeyForWorkspaceUsers(uploadedEntry.slug, uploadedEntry.clientsideKey));
-    }
-
-    if (manageKey && uploadedEntry.clientsideKey) {
-        processes.push(gdClient.manageKey(uploadedEntry.slug, uploadedEntry.clientsideKey));
-    }
-
-    await Promise.all(processes);
-
-}
 
 program
     .command('wallet')
@@ -519,13 +252,16 @@ program
 program
     .command('ls <folderPath>')
     .description('List all files in a workspace')
-    // .option('--oAuthToken <token>', 'defines oAuthToken token')
-    .action(async (folderPath: string) => {
+    .option('--access-token <token>', 'access token')
+    .action(async (folderPath: string, { accessToken }: { accessToken?: string }) => {
 
         try {
             const { workspaceId, filePath: dir } = parseGDPath(folderPath);
 
-            await initClientGD({ workspaceId: Number(workspaceId) })
+            await initClientGD({ 
+                workspaceId: Number(workspaceId),
+                accessToken
+            })
 
             let dirSlug;
             if (dir.length === 0 || dir === '.' || dir === '/') {
@@ -538,7 +274,6 @@ program
                 dirSlug = entry.slug;
             }
 
-            let currentPageSize = 0;
             let currentPage = 1;
             let keepGoing = true;
 
@@ -547,7 +282,7 @@ program
                     page: currentPage,
                     folderSlug: dirSlug
                 })
-                
+
                 const nameWidth = Math.max(...files.map(e => e.name.length), "File Name".length);
                 const sizeWidth = Math.max(...files.map(e => e.size.toString().length), "Size".length);
                 
@@ -564,7 +299,6 @@ program
                     );
                 }
 
-                currentPageSize = files.length; 
                 if (files.length === 15) {
                     const answer = prompt('Next page? (y/n) ');
                     keepGoing = answer.toLowerCase() === 'y';
@@ -584,12 +318,15 @@ program
 
 program
     .command('rm <folderPath>')
-    // .option('--oAuthToken <token>', 'defines oAuthToken token')
+    .option('--access-token <token>', 'access token')
     .description('Delete a file from a workspace')
-    .action(async (folderPath: string) => {
+    .action(async (folderPath: string, { accessToken }: { accessToken?: string }) => {
         try {
             const { workspaceId, filePath } = parseGDPath(folderPath);
-            await initClientGD({ workspaceId: Number(workspaceId) })
+            await initClientGD({ 
+                workspaceId: Number(workspaceId),
+                accessToken
+            })
             const fileInfo = await clientGD.getFileInfo({
                 path: filePath
             })
