@@ -116,7 +116,7 @@ export async function download(
         key: decryptionKey || undefined,
         carReader: CarReader,
         uploadChunkSize: ott.upload_chunk_size[entry.slug] || ott.gateway.upload_chunk_size,
-        cidData
+        cidData: cidData as any
     });
 
     const writable = fs.createWriteStream(localPath);
