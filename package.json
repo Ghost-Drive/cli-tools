@@ -19,13 +19,13 @@
     "@types/axios": "^0.14.0",
     "axios": "^0.21.1",
     "axios-curlirize": "^2.0.0",
+    "client-gateway": "../gdgateway-client",
     "client-gd": "../client-gd",
     "client-neyra": "github:neyralab/client-neyra",
     "commander": "^7.2.0",
     "dotenv": "^8.6.0",
     "esm": "^3.2.25",
-    "ethers": "^6.6.2",
-    "client-gateway": "github:neyralab/client-gateway",
+    "ethers": "^6.13.4",
     "inquirer": "^9.2.11",
     "jsonwebtoken": "^9.0.1",
     "mime": "^3.0.0",
@@ -34,8 +34,7 @@
     "prompt-sync": "^4.2.0",
     "s3rver": "github:Ghost-Drive/s3rver",
     "ts-loader": "^9.4.3",
-    "ts-node-dev": "^2.0.0",
-    "@peculiar/webcrypto": "1.4.4"
+    "ts-node-dev": "^2.0.0"
   },
   "devDependencies": {
     "@types/koa": "^2.15.0",

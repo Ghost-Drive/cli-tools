@@ -2,13 +2,12 @@ import {AuthConfig} from "./types/AuthConfig.js";
 import fs from 'fs';
 import { CarReader } from '@ipld/car/reader';
 import * as path from 'path';
-import { LocalFileStream, getUserRSAKeys, downloadFile, uploadFile } from 'client-gateway';
+import { LocalFileStream, getUserRSAKeys, downloadFile, uploadFile, getCrypto } from 'client-gateway';
 import { clientGD } from './clientGD';
 import forge from "node-forge";
 import {KeysAccess} from "./KeysAccess";
 import {EntryType} from "./types/Entry";
 import mime from 'mime';
-import { Crypto } from "@peculiar/webcrypto";
 import * as Base64 from 'base64-js';
 
 export async function getAuthConfig(): Promise<AuthConfig> {
@@ -188,7 +187,7 @@ export async function upload(
         ott.jwt_ott[0] // @todo is it ok for uploadId?
     );
 
-    const crypto = new Crypto();
+    const crypto = getCrypto();
     const key = await crypto.subtle.generateKey(
         { name: 'AES-GCM', length: 256 },
         true,
