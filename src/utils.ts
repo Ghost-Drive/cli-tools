@@ -232,3 +232,17 @@ export async function upload(
         clientsideKey
     }
 }
+
+export function parseGDPath(url: string) {
+    const regex = /^gd:\/\/([^\/]+)\/(.*)$/;
+    const match = url.match(regex);
+
+    if (match === null || match.length !== 3) {
+        throw new Error('Invalid URL format');
+    }
+
+    const workspaceId = match[1];
+    const filePath = match[2];
+
+    return { workspaceId, filePath };
+}
