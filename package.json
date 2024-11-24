@@ -9,14 +9,16 @@
   "scripts": {
     "release": "node release.js",
     "build": "rimraf dist && tsc",
+    "postinstall": "npm run build && cp .env ./dist",
     "test": "jest"
   },
   "author": "Ghostdrive",
   "license": "ISC",
   "dependencies": {
     "@ipld/car": "^5.2.6",
+    "client-gateway": "github:neyralab/client-gateway",
     "client-gd": "github:neyralab/client-gd#feat/GWEB-2546/Implement-FILES-methods",
-    "gd-flow": "../gd-flow",
+    "gd-flow": "github:neyralab/gd-flow",
     "commander": "^7.2.0",
     "dotenv": "^8.6.0",
     "ethers": "^6.13.4",
