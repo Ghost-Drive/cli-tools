@@ -8,7 +8,6 @@
   "type": "module",
   "scripts": {
     "release": "node release.js",
-    "postinstall": "npm run build && cp .env ./dist",
     "build": "rimraf dist && tsc",
     "test": "jest"
   },
@@ -16,15 +15,10 @@
   "license": "ISC",
   "dependencies": {
     "@ipld/car": "^5.2.6",
-    "@types/axios": "^0.14.0",
-    "axios": "^0.21.1",
-    "axios-curlirize": "^2.0.0",
-    "client-gateway": "github:neyralab/client-gateway",
-    "client-gd": "../client-gd",
-    "client-neyra": "github:neyralab/client-neyra",
+    "client-gd": "github:neyralab/client-gd#feat/GWEB-2546/Implement-FILES-methods",
+    "gd-flow": "../gd-flow",
     "commander": "^7.2.0",
     "dotenv": "^8.6.0",
-    "esm": "^3.2.25",
     "ethers": "^6.13.4",
     "inquirer": "^9.2.11",
     "jsonwebtoken": "^9.0.1",
@@ -32,7 +26,6 @@
     "node-forge": "^0.10.0",
     "progress": "^2.0.3",
     "prompt-sync": "^4.2.0",
-    "s3rver": "github:Ghost-Drive/s3rver",
     "ts-loader": "^9.4.3",
     "ts-node-dev": "^2.0.0"
   },

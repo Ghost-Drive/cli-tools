@@ -6,8 +6,8 @@ import {Wallet} from "ethers";
 import {EntryType} from "./types/Entry.js";
 import {KeysAccess} from "./KeysAccess.js";
 import { clientGD, initClientGD, defaultConfig as clientGDDefaultConfig } from './clientGD';
-import { download, getAuthConfig, upload } from './utils';
-import { getUserRSAKeys } from 'client-gateway';
+import { getAuthConfig } from './utils';
+import { getUserRSAKeys, upload, download } from 'gd-flow';
 import prompt_sync from "prompt-sync";
 import * as ethers from "ethers";
 
@@ -186,33 +186,54 @@ program
         const isDownload = from.startsWith(prefix);
         const isUpload = to.startsWith(prefix);
 
+        const authConfig = await getAuthConfig();
+        const mnemonic = authConfig.mnemonic;
+        
+        const accessKey = authConfig.authType === '1' ? {
+            accessKey: authConfig.accessKey,
+            accessSecret: authConfig.accessSecret
+        } : undefined;
+
         if (isDownload && isUpload) {
             throw new Error('Both "from" and "to" should not start with "gd://"');
         } else if (!isDownload && !isUpload) {
             throw new Error('Either "from" or "to" should start with "gd://"');
         } else if (isDownload) {
             const { workspaceId, filePath } = parseGDPath(from);
-            await initClientGD({ 
-                workspaceId: Number(workspaceId),
-                accessToken
-            })
-            await download(
+
+            await download({
                 filePath,
-                to,
-                decryptionKey
-            );
+                localPath: to,
+                decryptionKey,
+                accessToken,
+                mnemonic,
+                accessKey,
+                workspaceId
+            })
+
             console.log('Successfully downloaded');
 
         } else if (isUpload) {
             let { workspaceId, filePath } = parseGDPath(to);
-            await initClientGD({ 
-                workspaceId: Number(workspaceId),
-                accessToken
-            })
-            const { clientsideKey } = await upload(
-                from,
-                filePath
-            );
+
+            const authConfig = await getAuthConfig();
+            
+            const accessKey = authConfig.authType === '1' ? {
+                accessKey: authConfig.accessKey,
+                accessSecret: authConfig.accessSecret
+            } : undefined;
+
+            const [uploadResponse] = await upload({
+                destinationPath: filePath,
+                localPath: from,
+                accessToken,
+                mnemonic,
+                accessKey,
+                workspaceId
+            });
+
+            const clientsideKey = uploadResponse?.clientsideKey;
+
             console.log(`Successfully uploaded, decryption key: ${clientsideKey}`);
         }
 
