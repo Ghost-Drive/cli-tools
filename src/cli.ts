@@ -187,7 +187,18 @@ program
         const isUpload = to.startsWith(prefix);
 
         const authConfig = await getAuthConfig();
-        const mnemonic = authConfig.mnemonic;
+        let mnemonic = authConfig.mnemonic;
+
+        const promptMnemonic = async () => {
+            if (!mnemonic) {
+                mnemonic = prompt('Enter mnemonic: ');
+            }
+            return mnemonic;
+        }
+
+        const promptWalletIndex = async () => {
+            return Number(prompt('Enter wallet index: '));
+        }
         
         const accessKey = authConfig.authType === '1' ? {
             accessKey: authConfig.accessKey,
@@ -229,7 +240,10 @@ program
                 accessToken,
                 mnemonic,
                 accessKey,
-                workspaceId
+                workspaceId,
+                promptMnemonic,
+                promptWalletIndex,
+                promptShouldEncryptionByUser: async () => false
             });
 
             const clientsideKey = uploadResponse?.clientsideKey;
