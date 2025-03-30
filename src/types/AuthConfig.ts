@@ -1,4 +1,5 @@
 export interface AuthConfig {
+    authType: string;
     accessKey: string;
     accessSecret: string;
     mnemonic: string;
